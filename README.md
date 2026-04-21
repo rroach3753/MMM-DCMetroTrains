@@ -32,7 +32,15 @@ A full-featured [MagicMirror2](https://github.com/MagicMirrorOrg/MagicMirror) mo
 
 ## Installation
 
-From your MagicMirror `modules` folder:
+Using MagicMirror Package Manager (MMPM):
+
+```bash
+mmpm install MMM-DCMetroTrains
+```
+
+Then restart MagicMirror.
+
+Using git from your MagicMirror `modules` folder:
 
 ```bash
 git clone https://example.com/MMM-DCMetroTrains.git
