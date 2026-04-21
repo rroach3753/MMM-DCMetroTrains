@@ -1,0 +1,661 @@
+.dcmetro {
+  --metro-bg: rgba(8, 12, 22, 0.62);
+  --metro-border: rgba(255, 255, 255, 0.12);
+  --metro-border-strong: rgba(255, 255, 255, 0.22);
+  --metro-text: #f6f7fb;
+  --metro-muted: #aeb5c2;
+  --metro-shadow: 0 16px 36px rgba(0, 0, 0, 0.38);
+  --metro-good: #00a651;
+  --metro-warning: #d79b1f;
+  --metro-bad: #d63f3f;
+  --metro-alert: #ffb347;
+
+  width: 100%;
+  max-width: 560px;
+  color: var(--metro-text);
+  background: linear-gradient(160deg, rgba(9, 13, 24, 0.8), rgba(18, 24, 39, 0.8));
+  border: 1px solid var(--metro-border);
+  border-radius: 16px;
+  box-shadow: var(--metro-shadow);
+  padding: 14px;
+  backdrop-filter: blur(8px);
+}
+
+.dcmetro--commute {
+  border-color: rgba(255, 179, 71, 0.28);
+}
+
+.dcmetro--quiet {
+  transition: none !important;
+}
+
+.dcmetro--quiet * {
+  animation: none !important;
+  transition: none !important;
+}
+
+.dcmetro--criticalBlink {
+  animation: dcmetroPulse 2.2s ease-in-out infinite;
+}
+
+@keyframes dcmetroPulse {
+  0% {
+    box-shadow: 0 0 0 rgba(214, 63, 63, 0);
+  }
+  50% {
+    box-shadow: 0 0 18px rgba(214, 63, 63, 0.35);
+  }
+  100% {
+    box-shadow: 0 0 0 rgba(214, 63, 63, 0);
+  }
+}
+
+.dcmetro--compact {
+  padding: 10px;
+}
+
+.dcmetro--noBorders {
+  border: none !important;
+  box-shadow: none !important;
+  outline: none !important;
+}
+
+.dcmetro--noBorders .dcmetro__stationCard,
+.dcmetro--noBorders .dcmetro__group,
+.dcmetro--noBorders .dcmetro__incidents,
+.dcmetro--noBorders .dcmetro__bus,
+.dcmetro--noBorders .dcmetro__busStop,
+.dcmetro--noBorders .dcmetro__summaryChip,
+.dcmetro--noBorders .dcmetro__chip,
+.dcmetro--noBorders .dcmetro__condition,
+.dcmetro--noBorders .dcmetro__forecastChip {
+  border: none !important;
+  box-shadow: none !important;
+  outline: none !important;
+}
+
+.dcmetro--noBorders .dcmetro__incidents {
+  padding-top: 0;
+}
+
+.dcmetro--noBorders .dcmetro__table th,
+.dcmetro--noBorders .dcmetro__table td {
+  border-bottom: none !important;
+}
+
+.dcmetro--noBorders .dcmetro__stationCard--alert,
+.dcmetro--noBorders .dcmetro__summaryChip--stale,
+.dcmetro--noBorders .dcmetro__summaryChip--compact,
+.dcmetro--noBorders .dcmetro__condition--normal,
+.dcmetro--noBorders .dcmetro__condition--alert,
+.dcmetro--noBorders .dcmetro__condition--delayed,
+.dcmetro--noBorders .dcmetro__condition--weather,
+.dcmetro--noBorders .dcmetro__condition--night,
+.dcmetro--noBorders .dcmetro__condition--stale {
+  border-color: transparent !important;
+}
+
+.dcmetro--noBackground {
+  background: transparent !important;
+  backdrop-filter: none !important;
+}
+
+.dcmetro--noBackground .dcmetro__stationCard,
+.dcmetro--noBackground .dcmetro__group,
+.dcmetro--noBackground .dcmetro__incidents,
+.dcmetro--noBackground .dcmetro__bus,
+.dcmetro--noBackground .dcmetro__busStop,
+.dcmetro--noBackground .dcmetro__summaryChip,
+.dcmetro--noBackground .dcmetro__chip,
+.dcmetro--noBackground .dcmetro__condition,
+.dcmetro--noBackground .dcmetro__forecastChip,
+.dcmetro--noBackground .dcmetro__row--alert td {
+  background: transparent !important;
+}
+
+.dcmetro__summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.dcmetro__summaryChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  border: 1px solid var(--metro-border-strong);
+  border-radius: 999px;
+  padding: 5px 10px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--metro-text);
+  font-size: 0.7rem;
+  line-height: 1.2;
+}
+
+.dcmetro__summaryChip--stale {
+  border-color: rgba(214, 63, 63, 0.45);
+  color: #ffd1d1;
+}
+
+.dcmetro__summaryChip--compact {
+  border-color: rgba(255, 179, 71, 0.45);
+}
+
+.dcmetro__summaryLabel {
+  color: var(--metro-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 0.62rem;
+  white-space: nowrap;
+}
+
+.dcmetro__stationCard {
+  border: 1px solid var(--metro-border);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.03);
+  padding: 12px;
+  margin-bottom: 10px;
+}
+
+.dcmetro__stationCard--alert {
+  border-color: rgba(214, 63, 63, 0.3);
+}
+
+.dcmetro__stationCard--stale {
+  opacity: 0.96;
+}
+
+.dcmetro__header {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.dcmetro__station {
+  font-size: 1.15rem;
+  letter-spacing: 0.02em;
+  font-weight: 600;
+}
+
+.dcmetro__meta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.dcmetro__chip {
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: var(--metro-muted);
+  border-radius: 999px;
+  font-size: 0.64rem;
+  padding: 2px 8px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.dcmetro__conditions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.dcmetro__condition {
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 0.7rem;
+  line-height: 1.2;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.dcmetro__condition--normal {
+  color: #dbf5df;
+  border-color: rgba(0, 166, 81, 0.3);
+}
+
+.dcmetro__condition--alert {
+  color: #ffd1d1;
+  border-color: rgba(214, 63, 63, 0.3);
+}
+
+.dcmetro__condition--delayed {
+  color: #ffe3ad;
+  border-color: rgba(215, 155, 31, 0.35);
+}
+
+.dcmetro__condition--weather,
+.dcmetro__condition--night {
+  color: #d7e5ff;
+  border-color: rgba(93, 131, 214, 0.3);
+}
+
+.dcmetro__condition--stale {
+  color: #ffd1d1;
+  border-color: rgba(214, 63, 63, 0.35);
+}
+
+.dcmetro__alerts {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.dcmetro__alert {
+  border-left: 3px solid var(--metro-alert);
+  border-radius: 8px;
+  padding: 6px 10px;
+  background: rgba(255, 179, 71, 0.08);
+  font-size: 0.78rem;
+  line-height: 1.3;
+}
+
+.dcmetro__alert--major {
+  border-left-color: var(--metro-warning);
+  background: rgba(215, 155, 31, 0.08);
+}
+
+.dcmetro__alert--critical {
+  border-left-color: var(--metro-bad);
+  background: rgba(214, 63, 63, 0.1);
+}
+
+.dcmetro__incidentSeverity {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 1px 7px;
+  margin-right: 8px;
+  font-size: 0.58rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.dcmetro__incidentSeverity--advisory {
+  background: rgba(143, 160, 194, 0.16);
+  color: #d6dbe7;
+}
+
+.dcmetro__incidentSeverity--major {
+  background: rgba(215, 155, 31, 0.16);
+  color: #ffe0a4;
+}
+
+.dcmetro__incidentSeverity--critical {
+  background: rgba(214, 63, 63, 0.18);
+  color: #ffd1d1;
+}
+
+.dcmetro__forecast {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.dcmetro__forecastChip {
+  border-radius: 999px;
+  padding: 4px 8px;
+  font-size: 0.66rem;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.04);
+  white-space: nowrap;
+}
+
+.dcmetro__forecastChip--boarding,
+.dcmetro__status--boarding,
+.dcmetro__eta--boarding {
+  color: #daf7d8;
+}
+
+.dcmetro__forecastChip--arriving,
+.dcmetro__status--arriving,
+.dcmetro__eta--arriving {
+  color: #dbf2ff;
+}
+
+.dcmetro__forecastChip--watch,
+.dcmetro__status--watch,
+.dcmetro__eta--watch {
+  color: #ffe0a4;
+}
+
+.dcmetro__forecastChip--delayed,
+.dcmetro__status--delayed,
+.dcmetro__eta--delayed {
+  color: #ffd0a5;
+}
+
+.dcmetro__forecastChip--alert,
+.dcmetro__status--alert,
+.dcmetro__eta--alert {
+  color: #ffd1d1;
+}
+
+.dcmetro__groups {
+  display: grid;
+  gap: 10px;
+}
+
+.dcmetro__group {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  padding: 8px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.dcmetro__groupHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+
+.dcmetro__groupMeta {
+  white-space: nowrap;
+}
+
+.dcmetro__table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.dcmetro__table th,
+.dcmetro__table td {
+  padding: 5px 4px;
+  text-align: left;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.dcmetro__table th {
+  color: var(--metro-muted);
+  font-size: 0.68rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.dcmetro__row--alert td {
+  background: rgba(214, 63, 63, 0.06);
+}
+
+.dcmetro__line {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 33px;
+  height: 19px;
+  border-radius: 10px;
+  font-size: 0.66rem;
+  font-weight: 700;
+}
+
+.dcmetro__line--rd {
+  background: #be1e2d;
+  color: #fff;
+}
+
+.dcmetro__line--or {
+  background: #da8f22;
+  color: #101010;
+}
+
+.dcmetro__line--sv {
+  background: #bdc3c7;
+  color: #101010;
+}
+
+.dcmetro__line--bl {
+  background: #0083ce;
+  color: #fff;
+}
+
+.dcmetro__line--yl {
+  background: #f7d116;
+  color: #101010;
+}
+
+.dcmetro__line--gr {
+  background: #00a651;
+  color: #fff;
+}
+
+.dcmetro__line--na {
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+}
+
+.dcmetro__dest {
+  max-width: 190px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dcmetro__eta {
+  font-weight: 700;
+}
+
+.dcmetro__eta--normal {
+  color: #daf7d8;
+}
+
+.dcmetro__eta--critical,
+.dcmetro__status--critical,
+.dcmetro__forecastChip--critical {
+  color: #ffb5b5;
+}
+
+.dcmetro__cars {
+  border-radius: 999px;
+  padding: 1px 8px;
+  white-space: nowrap;
+  font-weight: 700;
+}
+
+.dcmetro__cars--high {
+  color: #dbf7de;
+  background: rgba(0, 166, 81, 0.16);
+}
+
+.dcmetro__cars--medium {
+  color: #ffe0a4;
+  background: rgba(215, 155, 31, 0.16);
+}
+
+.dcmetro__cars--low {
+  color: #ffd1d1;
+  background: rgba(214, 63, 63, 0.16);
+}
+
+.dcmetro__cars--unknown {
+  color: var(--metro-muted);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.dcmetro__cars--wmata-high {
+  color: #00a651;
+  background: transparent;
+}
+
+.dcmetro__cars--wmata-medium {
+  color: #d79b1f;
+  background: transparent;
+}
+
+.dcmetro__cars--wmata-low {
+  color: #d63f3f;
+  background: transparent;
+}
+
+.dcmetro__cars--off {
+  background: transparent;
+  color: inherit;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.dcmetro__status {
+  font-size: 0.64rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+
+.dcmetro__incidents {
+  margin-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding-top: 8px;
+  display: grid;
+  gap: 6px;
+}
+
+.dcmetro__bus {
+  margin-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding-top: 8px;
+  display: grid;
+  gap: 8px;
+}
+
+.dcmetro__busHeader {
+  color: var(--metro-muted);
+  font-size: 0.72rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.dcmetro__busStop {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 8px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.dcmetro__busStopName {
+  margin-bottom: 6px;
+  font-size: 0.82rem;
+  color: var(--metro-text);
+}
+
+.dcmetro__busRoute {
+  font-weight: 700;
+  color: #d7e5ff;
+}
+
+.dcmetro__incidents--scroll {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.dcmetro__incidents--scroll .dcmetro__incident {
+  display: inline-block;
+  margin-right: 24px;
+  animation: dcmetroIncidentScroll var(--dcmetro-incident-scroll-duration, 28s) linear infinite;
+}
+
+@keyframes dcmetroIncidentScroll {
+  0% {
+    transform: translateX(105%);
+  }
+  100% {
+    transform: translateX(-120%);
+  }
+}
+
+.dcmetro__incident {
+  color: #ffd588;
+  line-height: 1.35;
+  font-size: 0.75rem;
+}
+
+.dcmetro__incident--critical {
+  color: #ffd1d1;
+}
+
+.dcmetro__incident--major {
+  color: #ffe0a4;
+}
+
+.dcmetro__incidentRange {
+  display: inline-block;
+  margin: 0 0.5rem 0 0.45rem;
+  padding: 0.08rem 0.45rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--metro-muted);
+  font-size: 0.68rem;
+  line-height: 1.2;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.dcmetro__updated {
+  margin-top: 8px;
+}
+
+.dcmetro__updated--stale {
+  color: #ffd1d1;
+}
+
+.dcmetro__empty {
+  color: var(--metro-muted);
+  padding: 6px 0;
+}
+
+.dcmetro__error {
+  color: #ff8d8d;
+}
+
+.dcmetro__debug {
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.16);
+  word-break: break-word;
+}
+
+.dcmetro--compact .dcmetro__station {
+  font-size: 1rem;
+}
+
+.dcmetro--compact .dcmetro__table th,
+.dcmetro--compact .dcmetro__table td {
+  padding-top: 3px;
+  padding-bottom: 3px;
+}
+
+.dcmetro--compact .dcmetro__stationCard {
+  padding: 10px;
+}
+
+.dcmetro--busOnly {
+  max-width: 460px;
+}
+
+.dcmetro--busOnly .dcmetro__bus {
+  margin-top: 0;
+  padding: 8px;
+}
+
+.dcmetro--busOnly .dcmetro__busHeader {
+  margin-bottom: 6px;
+}
+
+.dcmetro--busOnly .dcmetro__busStop {
+  margin-bottom: 6px;
+  padding: 8px;
+}
+
+.dcmetro--busOnly .dcmetro__table th,
+.dcmetro--busOnly .dcmetro__table td {
+  padding-top: 2px;
+  padding-bottom: 2px;
+}
