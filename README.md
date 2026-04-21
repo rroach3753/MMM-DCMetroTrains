@@ -25,10 +25,16 @@ A full-featured [MagicMirror2](https://github.com/MagicMirrorOrg/MagicMirror) mo
 - Optional weather row when coordinates are provided
 - Automatic retries when the API fails
 
-## Prerequisites
+## Requirements
 
 1. A working MagicMirror2 installation.
 2. A WMATA API key from: https://developer.wmata.com/
+
+This module will not function without a valid API key.
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for full release history.
 
 ## Installation
 
@@ -484,3 +490,15 @@ stationCodes: ["A01", "C01"]
 Use station objects only when you need per-station differences.
 
 That keeps the config easier to read and reduces the chance of accidentally overriding a setting you meant to keep global.
+
+
+## Screenshots
+
+1. Boarder and Background Enabled, Cars highlighted
+![alt text](images/image.png)
+
+2. Boarder and Background Disabled, Cars highlighted
+![alt text](images/image-1.png)
+
+3. Boarder and Background Disabled, Cars not highlighted
+![alt text](images/image-2.png)
