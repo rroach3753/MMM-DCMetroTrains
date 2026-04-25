@@ -1,5 +1,5 @@
 const NodeHelper = require("node_helper");
-const https = require("https");
+const https = require("node:https");
 
 const LINE_ORDER = {
   RD: 1,

@@ -1,6 +1,6 @@
 # MMM-DCMetroTrains
 
-A full-featured [MagicMirror2](https://github.com/MagicMirrorOrg/MagicMirror) module for live Washington DC Metro train arrivals and active service alerts using the WMATA API.
+A full-featured [MagicMirror²](https://github.com/MagicMirrorOrg/MagicMirror) module for live Washington DC Metro train arrivals and active service alerts using the WMATA API.
 
 ## Features
 
@@ -27,7 +27,7 @@ A full-featured [MagicMirror2](https://github.com/MagicMirrorOrg/MagicMirror) mo
 
 ## Requirements
 
-1. A working MagicMirror2 installation.
+1. A working MagicMirror² installation.
 2. A WMATA API key from: https://developer.wmata.com/
 
 This module will not function without a valid API key.
@@ -49,7 +49,7 @@ Then restart MagicMirror.
 Using git from your MagicMirror `modules` folder:
 
 ```bash
-git clone https://example.com/MMM-DCMetroTrains.git
+git clone https://github.com/rroach3753/MMM-DCMetroTrains.git
 cd MMM-DCMetroTrains
 npm install
 ```
@@ -59,6 +59,24 @@ If you copied this folder manually, place it at:
 ```text
 MagicMirror/modules/MMM-DCMetroTrains
 ```
+
+## Update
+
+Using MMPM:
+
+```bash
+mmpm update MMM-DCMetroTrains
+```
+
+Using git from your module folder:
+
+```bash
+cd MMM-DCMetroTrains
+git pull
+npm install
+```
+
+Restart MagicMirror after updating.
 
 ## Example Config
 

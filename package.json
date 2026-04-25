@@ -3,15 +3,21 @@
   "version": "1.0.0",
   "description": "MagicMirror module for live Washington DC Metro train predictions and service alerts",
   "main": "node_helper.js",
+  "scripts": {
+    "lint": "eslint ."
+  },
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://example.com/MMM-DCMetroTrains.git"
+    "url": "https://github.com/rroach3753/MMM-DCMetroTrains.git"
   },
   "keywords": [
     "magicmirror",
     "wmata",
     "dc-metro",
     "train"
-  ]
+  ],
+  "devDependencies": {
+    "eslint": "^9.35.0"
+  }
 }
