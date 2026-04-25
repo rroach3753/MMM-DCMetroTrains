@@ -9,6 +9,11 @@ The format is based on Keep a Changelog.
 ### Added
 - Added this changelog to track releases and notable module updates.
 
+## [1.0.4] - 2026-04-24
+
+### Changed
+- Bumped the development dependency on ESLint to 10.2.1 and refreshed the lockfile.
+
 ## [Pre-Release] - 2026-04-18 to 2026-04-20
 
 ### Day 1 AM - Initial Build and Core Feature Foundation

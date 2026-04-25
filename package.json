@@ -1,6 +1,6 @@
 {
   "name": "mmm-dcmetrotrains",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "MagicMirror module for live Washington DC Metro train predictions and service alerts",
   "main": "node_helper.js",
   "scripts": {
@@ -18,6 +18,6 @@
     "train"
   ],
   "devDependencies": {
-    "eslint": "^9.35.0"
+    "eslint": "^10.2.1"
   }
 }
