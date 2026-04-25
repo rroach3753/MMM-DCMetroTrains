@@ -9,6 +9,14 @@ The format is based on Keep a Changelog.
 ### Added
 - Added this changelog to track releases and notable module updates.
 
+## [1.0.5] - 2026-04-25
+
+### Fixed
+- Resolved MagicMirror lint issues by removing a duplicate `socketNotificationReceived` key and clearing unused catch variables.
+
+### Changed
+- Updated ESLint config to use `defineConfig` and aligned package metadata (`type`, `author`, and lint script style) with repository checks.
+
 ## [1.0.4] - 2026-04-24
 
 ### Changed

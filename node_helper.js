@@ -196,7 +196,7 @@ module.exports = NodeHelper.create({
       if (this.latestStations.length) {
         this.broadcastData();
       }
-    } catch (_error) {
+    } catch {
       this.latestIncidents = [];
     }
   },
@@ -337,7 +337,7 @@ module.exports = NodeHelper.create({
           name: profile.name || response.StopName || profile.stopId,
           predictions
         };
-      } catch (_error) {
+      } catch {
         return {
           stopId: profile.stopId,
           name: profile.name || profile.stopId,

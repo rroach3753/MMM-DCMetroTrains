@@ -1354,32 +1354,5 @@ Module.register("MMM-DCMetroTrains", {
     }
     const hours = Math.floor(minutes / 60);
     return `${hours}h ago`;
-  },
-
-  socketNotificationReceived(notification, payload) {
-    if (notification === "DC_METRO_DATA") {
-      this.loaded = true;
-      this.dataState = {
-        stations: payload.stations || [],
-        busStops: payload.busStops || [],
-        incidents: payload.incidents || [],
-        weather: payload.weather || null,
-        fetchedAt: payload.fetchedAt || Date.now(),
-        error: null
-      };
-
-      if (this.currentStationIndex >= this.dataState.stations.length) {
-        this.currentStationIndex = 0;
-      }
-
-      this.updateDom(this.config.animationSpeed);
-      return;
-    }
-
-    if (notification === "DC_METRO_ERROR") {
-      this.loaded = true;
-      this.dataState.error = payload || "Unable to load Metro train data.";
-      this.updateDom(this.config.animationSpeed);
-    }
   }
 });
