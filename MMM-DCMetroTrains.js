@@ -470,8 +470,8 @@ Module.register("MMM-DCMetroTrains", {
 
   buildFirstLastSummary(station) {
     const useAllLines = this.getStationEffectiveSetting(station, "showFirstLastAllLines", this.config.showFirstLastAllLines);
-    const predictions = useAllLines ? station.allPredictions || [] : station.predictions || [];
-    const grouped = this.groupPredictionsByLine(predictions);
+    const scheduled = useAllLines ? station.firstLastAllLines || [] : station.firstLastByLine || [];
+    const grouped = scheduled.length ? this.normalizeFirstLastGroups(scheduled) : this.buildFirstLastGroupsFromPredictions(station, useAllLines);
 
     if (!grouped.length) {
       return null;
@@ -481,10 +481,10 @@ Module.register("MMM-DCMetroTrains", {
     summary.className = `dcmetro__firstLast ${useAllLines ? "dcmetro__firstLast--allLines" : ""}`.trim();
 
     grouped.forEach((group) => {
-      const first = group.predictions[0];
-      const last = group.predictions[group.predictions.length - 1];
+      const first = group.first || null;
+      const last = group.last || null;
 
-      if (!first) {
+      if (!first && !last) {
         return;
       }
 
@@ -492,13 +492,18 @@ Module.register("MMM-DCMetroTrains", {
       row.className = "dcmetro__firstLastLine";
 
       row.appendChild(this.buildLineBadge(group.line));
-      row.appendChild(this.buildFirstLastEntry("First", first));
+      if (first) {
+        row.appendChild(this.buildFirstLastEntry("First", first));
+      }
 
-      if (last && last !== first) {
-        const separator = document.createElement("span");
-        separator.className = "dcmetro__firstLastSeparator dimmed";
-        separator.textContent = "•";
-        row.appendChild(separator);
+      if (last && (!first || last !== first)) {
+        if (first) {
+          const separator = document.createElement("span");
+          separator.className = "dcmetro__firstLastSeparator dimmed";
+          separator.textContent = "•";
+          row.appendChild(separator);
+        }
+
         row.appendChild(this.buildFirstLastEntry("Last", last));
       }
 
@@ -506,6 +511,33 @@ Module.register("MMM-DCMetroTrains", {
     });
 
     return summary.childNodes.length ? summary : null;
+  },
+
+  normalizeFirstLastGroups(groups) {
+    return groups
+      .filter((group) => group && group.line)
+      .map((group) => ({
+        line: group.line,
+        first: group.first || null,
+        last: group.last || null
+      }))
+      .filter((group) => group.first || group.last);
+  },
+
+  buildFirstLastGroupsFromPredictions(station, useAllLines) {
+    const predictions = useAllLines ? station.allPredictions || [] : station.predictions || [];
+    return this.groupPredictionsByLine(predictions)
+      .map((group) => {
+        const first = group.predictions[0] || null;
+        const last = group.predictions[group.predictions.length - 1] || null;
+
+        return {
+          line: group.line,
+          first,
+          last
+        };
+      })
+      .filter((group) => group.first || group.last);
   },
 
   buildFirstLastEntry(label, prediction) {

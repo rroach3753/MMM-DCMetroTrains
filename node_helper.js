@@ -66,6 +66,8 @@ module.exports = NodeHelper.create({
     this.latestStations = [];
     this.latestBusStops = [];
     this.stationProfiles = [];
+    this.firstLastByStation = {};
+    this.firstLastFetchedDate = null;
   },
 
   socketNotificationReceived(notification, payload) {
@@ -172,6 +174,9 @@ module.exports = NodeHelper.create({
   async refreshPredictionsAndWeather() {
     try {
       const metroBusOnly = this.isMetroBusOnlyMode();
+      if (!metroBusOnly) {
+        await this.refreshFirstLastTimesIfNeeded();
+      }
       const [predictions, weather, busStops] = await Promise.all([
         metroBusOnly ? Promise.resolve([]) : this.fetchPredictions(),
         metroBusOnly ? Promise.resolve(null) : this.fetchWeather(),
@@ -218,6 +223,226 @@ module.exports = NodeHelper.create({
     const url = `https://api.wmata.com/StationPrediction.svc/json/GetPrediction/${stationSegment}`;
     const response = await this.getJson(url);
     return response.Trains || [];
+  },
+
+  async refreshFirstLastTimesIfNeeded() {
+    const today = new Date().toISOString().slice(0, 10);
+    if (this.firstLastFetchedDate === today && Object.keys(this.firstLastByStation).length) {
+      return;
+    }
+
+    const nextByStation = {};
+    await Promise.all(this.stationProfiles.map(async (profile) => {
+      try {
+        const firstLast = await this.fetchStationFirstLastTimes(profile.code);
+        nextByStation[profile.code] = firstLast;
+      } catch {
+        nextByStation[profile.code] = [];
+      }
+    }));
+
+    this.firstLastByStation = nextByStation;
+    this.firstLastFetchedDate = today;
+  },
+
+  async fetchStationFirstLastTimes(stationCode) {
+    const url = `https://api.wmata.com/Rail.svc/json/jStationTimes?StationCode=${encodeURIComponent(stationCode)}`;
+    const response = await this.getJson(url);
+    const rows = this.extractStationTimeRows(response);
+    return this.buildFirstLastByLine(rows);
+  },
+
+  extractStationTimeRows(response) {
+    if (!response || typeof response !== "object") {
+      return [];
+    }
+
+    const directArrays = [
+      response.StationTimes,
+      response.TrainTimes,
+      response.Trains,
+      response.Times,
+      response.Entries
+    ];
+
+    for (const candidate of directArrays) {
+      if (Array.isArray(candidate)) {
+        return candidate;
+      }
+    }
+
+    return Object.values(response).find((value) => Array.isArray(value)) || [];
+  },
+
+  buildFirstLastByLine(rows) {
+    const grouped = {};
+
+    rows.forEach((row) => {
+      const line = this.resolveLineCodeFromScheduleRow(row);
+      if (!line) {
+        return;
+      }
+
+      const firstRaw = this.pickFirstDefined(row, [
+        "FirstTrain",
+        "FirstTrainTime",
+        "FirstDeparture",
+        "FirstDepartureTime",
+        "AMFirstTrainTime"
+      ]);
+      const lastRaw = this.pickFirstDefined(row, [
+        "LastTrain",
+        "LastTrainTime",
+        "LastDeparture",
+        "LastDepartureTime",
+        "PMLastTrainTime"
+      ]);
+
+      const firstMinutes = this.parseScheduleMinutes(firstRaw, { assumePostMidnightForEarlyHours: false });
+      const lastMinutes = this.parseScheduleMinutes(lastRaw, { assumePostMidnightForEarlyHours: true });
+
+      if (firstMinutes == null && lastMinutes == null) {
+        return;
+      }
+
+      const destination = this.pickFirstDefined(row, [
+        "DestinationStationName",
+        "DestinationName",
+        "Destination",
+        "DestinationStation",
+        "ToStationName",
+        "ToStation"
+      ]) || "Unknown";
+
+      if (!grouped[line]) {
+        grouped[line] = {
+          line,
+          first: null,
+          last: null
+        };
+      }
+
+      if (firstMinutes != null) {
+        const firstEntry = {
+          clockTime: this.formatClockFromServiceMinutes(firstMinutes),
+          destination,
+          minutesSort: firstMinutes
+        };
+        if (!grouped[line].first || firstEntry.minutesSort < grouped[line].first.minutesSort) {
+          grouped[line].first = firstEntry;
+        }
+      }
+
+      if (lastMinutes != null) {
+        const lastEntry = {
+          clockTime: this.formatClockFromServiceMinutes(lastMinutes),
+          destination,
+          minutesSort: lastMinutes
+        };
+        if (!grouped[line].last || lastEntry.minutesSort > grouped[line].last.minutesSort) {
+          grouped[line].last = lastEntry;
+        }
+      }
+    });
+
+    return Object.keys(grouped)
+      .sort((a, b) => this.getLineWeight(a) - this.getLineWeight(b))
+      .map((line) => grouped[line])
+      .filter((entry) => entry.first || entry.last);
+  },
+
+  resolveLineCodeFromScheduleRow(row) {
+    const line = this.pickFirstDefined(row, [
+      "LineCode",
+      "Line",
+      "LineAbbreviation",
+      "RouteCode"
+    ]);
+
+    if (!line) {
+      return "NA";
+    }
+
+    return String(line).trim().toUpperCase();
+  },
+
+  pickFirstDefined(source, keys) {
+    if (!source || typeof source !== "object") {
+      return null;
+    }
+
+    for (const key of keys) {
+      if (source[key] != null && String(source[key]).trim() !== "") {
+        return source[key];
+      }
+    }
+
+    return null;
+  },
+
+  parseScheduleMinutes(rawValue, options = {}) {
+    if (rawValue == null) {
+      return null;
+    }
+
+    const text = String(rawValue).trim();
+    if (!text) {
+      return null;
+    }
+
+    let hours = null;
+    let minutes = null;
+    let matched = false;
+
+    const ampmMatch = text.match(/^(\d{1,2}):(\d{2})\s*([AaPp][Mm])$/);
+    if (ampmMatch) {
+      hours = Number(ampmMatch[1]);
+      minutes = Number(ampmMatch[2]);
+      const ampm = ampmMatch[3].toUpperCase();
+      if (ampm === "AM") {
+        hours = hours % 12;
+      } else {
+        hours = (hours % 12) + 12;
+      }
+      matched = true;
+    }
+
+    if (!matched) {
+      const colonMatch = text.match(/^(\d{1,2}):(\d{2})$/);
+      if (colonMatch) {
+        hours = Number(colonMatch[1]);
+        minutes = Number(colonMatch[2]);
+        matched = true;
+      }
+    }
+
+    if (!matched) {
+      const compactMatch = text.match(/^(\d{3,4})$/);
+      if (compactMatch) {
+        const numeric = Number(compactMatch[1]);
+        hours = Math.floor(numeric / 100);
+        minutes = numeric % 100;
+        matched = true;
+      }
+    }
+
+    if (!matched || !Number.isFinite(hours) || !Number.isFinite(minutes) || minutes < 0 || minutes > 59 || hours < 0) {
+      return null;
+    }
+
+    let total = hours * 60 + minutes;
+    if (options.assumePostMidnightForEarlyHours && hours >= 0 && hours <= 3) {
+      total += 1440;
+    }
+
+    return total;
+  },
+
+  formatClockFromServiceMinutes(totalMinutes) {
+    const normalizedMinutes = ((totalMinutes % 1440) + 1440) % 1440;
+    const hours = String(Math.floor(normalizedMinutes / 60)).padStart(2, "0");
+    const minutes = String(normalizedMinutes % 60).padStart(2, "0");
+    return `${hours}:${minutes}`;
   },
 
   async fetchIncidents() {
@@ -482,6 +707,10 @@ module.exports = NodeHelper.create({
       const groupedByLine = this.groupPredictionsByLine(predictions);
       const alerts = this.collectAlerts(predictions, incidents, profile);
       const condition = this.buildConditionSummary(predictions, incidents, weather, now);
+      const firstLastAllLines = this.firstLastByStation[profile.code] || [];
+      const firstLastByLine = firstLastAllLines
+        .filter((entry) => this.matchesLineFilter(entry.line, this.config.lineFilter))
+        .filter((entry) => this.matchesLineFilter(entry.line, profile.lineFilter));
 
       return {
         code: profile.code,
@@ -490,6 +719,8 @@ module.exports = NodeHelper.create({
         profile,
         predictions,
         allPredictions,
+        firstLastByLine,
+        firstLastAllLines,
         groupedPredictions: groupedByLine,
         nextSummary: predictions.slice(0, parseNumber(this.config.summaryCount, 3)),
         alerts,
