@@ -9,6 +9,11 @@ The format is based on Keep a Changelog.
 ### Added
 - Added this changelog to track releases and notable module updates.
 
+## [1.0.6] - 2026-04-28
+
+### Changed
+- Cleanup release to align the module and release notes with the current 1.0.6 codebase.
+
 ## [1.0.5] - 2026-04-25
 
 ### Fixed

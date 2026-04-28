@@ -1,6 +1,6 @@
 {
   "name": "mmm-dcmetrotrains",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "type": "commonjs",
   "description": "MagicMirror module for live Washington DC Metro train predictions and service alerts",
   "main": "node_helper.js",

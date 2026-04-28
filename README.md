@@ -25,6 +25,8 @@ A full-featured [MagicMirror²](https://github.com/MagicMirrorOrg/MagicMirror) m
 - Optional weather row when coordinates are provided
 - Automatic retries when the API fails
 
+Release line `1.0.6` is a cleanup release.
+
 ## Requirements
 
 1. A working MagicMirror² installation.
