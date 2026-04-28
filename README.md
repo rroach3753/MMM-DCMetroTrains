@@ -9,9 +9,10 @@ A full-featured [MagicMirror²](https://github.com/MagicMirrorOrg/MagicMirror) m
 - Station rotation mode for multi-station setups
 - Route-aware grouping by line with sorted arrivals underneath each line header
 - Next-train summary strip for a fast commute glance
+- Optional first/last train summaries per line and station
 - Line filtering (show only selected rail lines)
 - Destination filtering (keyword includes)
-- Optional display controls for direction, cars, track, and status badges
+- Optional display controls for direction, cars, and status badges
 - Color-coded car counts that highlight longer and shorter consists
 - Service alert severity filtering and custom keyword alerts
 - Optional incident ticker scrolling and row caps
@@ -147,11 +148,12 @@ Add this to your `config/config.js` file:
     showFreshnessChip: true,
     showCars: true,
     showCarHighlights: false,
-    showTrack: true,
     showDirection: true,
     showStationCode: false,
     showStatus: true,
     showNextSummary: true,
+    showFirstLastTrains: false,
+    showFirstLastAllLines: false,
     showMetroBus: false,
     metroBusOnlyMode: false,
     showMetroBusHeader: true,
@@ -233,11 +235,12 @@ All other settings are optional and fall back to the defaults shown below.
 | `showFreshnessChip` | Boolean | No | `true` | Shows or hides the top summary chip labeled `Fresh` or `Stale`. |
 | `showCars` | Boolean | No | `true` | Shows or hides the train car-count column. Car badges are color-coded by train length. |
 | `showCarHighlights` | Boolean | No | `false` | Switches car badges to the older filled highlight-style format instead of the WMATA color palette. |
-| `showTrack` | Boolean | No | `true` | Shows or hides the track number column. |
 | `showDirection` | Boolean | No | `true` | Shows or hides the direction column (northbound/southbound). |
 | `showStationCode` | Boolean | No | `false` | Shows or hides station code chip in the header. |
 | `showStatus` | Boolean | No | `true` | Shows or hides the status badge column. |
 | `showNextSummary` | Boolean | No | `true` | Shows or hides the top-of-card next-train summary strip. |
+| `showFirstLastTrains` | Boolean | No | `false` | Shows or hides a per-line first/last train summary above the arrivals table. First/last times are normalized to a 24-hour clock, so after-midnight service displays correctly. |
+| `showFirstLastAllLines` | Boolean | No | `false` | When first/last summaries are enabled, shows all station lines instead of only the filtered lines. |
 | `showMetroBus` | Boolean | No | `false` | Enables the MetroBus predictions section. Off by default. |
 | `metroBusOnlyMode` | Boolean | No | `false` | MetroBus-only compact mode. Hides rail cards/incidents and shows only MetroBus content in a tighter layout. |
 | `showMetroBusHeader` | Boolean | No | `true` | Shows or hides the MetroBus section header label. |

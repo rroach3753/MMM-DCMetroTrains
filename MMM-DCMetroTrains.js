@@ -153,11 +153,12 @@ Module.register("MMM-DCMetroTrains", {
     showFreshnessChip: true,
     showCars: true,
     showCarHighlights: false,
-    showTrack: true,
     showDirection: true,
     showStationCode: false,
     showStatus: true,
     showNextSummary: true,
+    showFirstLastTrains: false,
+    showFirstLastAllLines: false,
     showMetroBus: false,
     metroBusOnlyMode: false,
     showMetroBusHeader: true,
@@ -372,6 +373,13 @@ Module.register("MMM-DCMetroTrains", {
       card.appendChild(this.buildForecastSummary(station.nextSummary));
     }
 
+    if (this.getStationEffectiveSetting(station, "showFirstLastTrains", this.config.showFirstLastTrains)) {
+      const firstLast = this.buildFirstLastSummary(station);
+      if (firstLast) {
+        card.appendChild(firstLast);
+      }
+    }
+
     card.appendChild(this.buildArrivals(station, isCompact));
     return card;
   },
@@ -460,6 +468,63 @@ Module.register("MMM-DCMetroTrains", {
     return forecast;
   },
 
+  buildFirstLastSummary(station) {
+    const useAllLines = this.getStationEffectiveSetting(station, "showFirstLastAllLines", this.config.showFirstLastAllLines);
+    const predictions = useAllLines ? station.allPredictions || [] : station.predictions || [];
+    const grouped = this.groupPredictionsByLine(predictions);
+
+    if (!grouped.length) {
+      return null;
+    }
+
+    const summary = document.createElement("div");
+    summary.className = `dcmetro__firstLast ${useAllLines ? "dcmetro__firstLast--allLines" : ""}`.trim();
+
+    grouped.forEach((group) => {
+      const first = group.predictions[0];
+      const last = group.predictions[group.predictions.length - 1];
+
+      if (!first) {
+        return;
+      }
+
+      const row = document.createElement("div");
+      row.className = "dcmetro__firstLastLine";
+
+      row.appendChild(this.buildLineBadge(group.line));
+      row.appendChild(this.buildFirstLastEntry("First", first));
+
+      if (last && last !== first) {
+        const separator = document.createElement("span");
+        separator.className = "dcmetro__firstLastSeparator dimmed";
+        separator.textContent = "•";
+        row.appendChild(separator);
+        row.appendChild(this.buildFirstLastEntry("Last", last));
+      }
+
+      summary.appendChild(row);
+    });
+
+    return summary.childNodes.length ? summary : null;
+  },
+
+  buildFirstLastEntry(label, prediction) {
+    const entry = document.createElement("span");
+    entry.className = "dcmetro__firstLastEntry";
+
+    const entryLabel = document.createElement("span");
+    entryLabel.className = "dcmetro__firstLastEntryLabel";
+    entryLabel.textContent = `${label}:`;
+    entry.appendChild(entryLabel);
+
+    const entryValue = document.createElement("span");
+    entryValue.className = "dcmetro__firstLastEntryValue";
+    entryValue.textContent = `${prediction.clockTime || prediction.displayMinutes} ${prediction.destination}`;
+    entry.appendChild(entryValue);
+
+    return entry;
+  },
+
   buildArrivals(station, isCompact) {
     const includeLine = !this.getStationEffectiveSetting(station, "groupByLine", this.config.groupByLine);
     const rows = station.predictions.slice(0, this.getStationEffectiveRows(station, isCompact));
@@ -520,9 +585,6 @@ Module.register("MMM-DCMetroTrains", {
     if (this.config.showCars) {
       columns.push("Cars");
     }
-    if (this.config.showTrack) {
-      columns.push("Track");
-    }
     if (this.config.showStatus) {
       columns.push("Status");
     }
@@ -570,13 +632,6 @@ Module.register("MMM-DCMetroTrains", {
         cars.className = `dcmetro__cars ${this.getCarsClassForMode(prediction)}`.trim();
         cars.textContent = prediction.carsLabel;
         row.appendChild(cars);
-      }
-
-      if (this.config.showTrack) {
-        const track = document.createElement("td");
-        track.className = "dcmetro__track dimmed";
-        track.textContent = prediction.track || "-";
-        row.appendChild(track);
       }
 
       if (this.config.showStatus) {
@@ -1113,7 +1168,6 @@ Module.register("MMM-DCMetroTrains", {
       cars: prediction.cars || "",
       carsLabel: this.formatCars(prediction.cars),
       carsClass,
-      track: prediction.track || "",
       statusClass: status.className,
       statusLabel: status.label,
       alerts: prediction.alerts || [],

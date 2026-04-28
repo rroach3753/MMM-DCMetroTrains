@@ -437,30 +437,26 @@ module.exports = NodeHelper.create({
   groupPredictionsByStation(predictions) {
     const grouped = {};
 
-    predictions
-      .filter((item) => this.matchesLineFilter(item.Line, this.config.lineFilter))
-      .filter((item) => this.matchesDestinationFilter(item.DestinationName, this.config.destinationIncludes))
-      .forEach((item) => {
-        const stationCode = item.LocationCode;
-        if (!stationCode) {
-          return;
-        }
+    predictions.forEach((item) => {
+      const stationCode = item.LocationCode;
+      if (!stationCode) {
+        return;
+      }
 
-        if (!grouped[stationCode]) {
-          grouped[stationCode] = [];
-        }
+      if (!grouped[stationCode]) {
+        grouped[stationCode] = [];
+      }
 
-        grouped[stationCode].push({
-          line: item.Line || "NA",
-          destination: item.DestinationName || "Unknown",
-          direction: this.directionFromNumber(item.Group),
-          minutesRaw: item.Min,
-          displayMinutes: this.formatMinutes(item.Min),
-          minutesSort: this.normalizeMinutes(item.Min),
-          cars: item.Car,
-          track: item.TrackNum
-        });
+      grouped[stationCode].push({
+        line: item.Line || "NA",
+        destination: item.DestinationName || "Unknown",
+        direction: this.directionFromNumber(item.Group),
+        minutesRaw: item.Min,
+        displayMinutes: this.formatMinutes(item.Min),
+        minutesSort: this.normalizeMinutes(item.Min),
+        cars: item.Car
       });
+    });
 
     Object.keys(grouped).forEach((stationCode) => {
       grouped[stationCode].sort((a, b) => {
@@ -482,6 +478,7 @@ module.exports = NodeHelper.create({
     return profiles.map((profile) => {
       const rawPredictions = grouped[profile.code] || [];
       const predictions = this.filterAndDecoratePredictions(rawPredictions, profile, incidents, now);
+      const allPredictions = this.filterAndDecoratePredictions(rawPredictions, profile, incidents, now, { ignoreLineFilter: true });
       const groupedByLine = this.groupPredictionsByLine(predictions);
       const alerts = this.collectAlerts(predictions, incidents, profile);
       const condition = this.buildConditionSummary(predictions, incidents, weather, now);
@@ -492,6 +489,7 @@ module.exports = NodeHelper.create({
         displayName: profile.name || this.stationMap[profile.code] || profile.code,
         profile,
         predictions,
+        allPredictions,
         groupedPredictions: groupedByLine,
         nextSummary: predictions.slice(0, parseNumber(this.config.summaryCount, 3)),
         alerts,
@@ -501,11 +499,14 @@ module.exports = NodeHelper.create({
     });
   },
 
-  filterAndDecoratePredictions(predictions, profile, incidents, now) {
+  filterAndDecoratePredictions(predictions, profile, incidents, now, options = {}) {
     const incidentLines = this.collectIncidentLines(incidents);
+    const ignoreLineFilter = Boolean(options.ignoreLineFilter);
 
     return predictions
-      .filter((item) => this.matchesLineFilter(item.line, profile.lineFilter))
+      .filter((item) => ignoreLineFilter || this.matchesLineFilter(item.line, this.config.lineFilter))
+      .filter((item) => ignoreLineFilter || this.matchesLineFilter(item.line, profile.lineFilter))
+      .filter((item) => this.matchesDestinationFilter(item.destination, this.config.destinationIncludes))
       .filter((item) => this.matchesDestinationFilter(item.destination, profile.destinationIncludes))
       .map((item) => this.decoratePrediction(item, incidentLines, now));
   },
@@ -520,10 +521,10 @@ module.exports = NodeHelper.create({
       direction: prediction.direction || "-",
       displayMinutes: prediction.displayMinutes,
       minutesSort: prediction.minutesSort,
+      clockTime: this.formatClockTime(now, prediction.minutesSort),
       cars: prediction.cars || "",
       carsLabel: this.formatCars(prediction.cars),
       carsClass,
-      track: prediction.track || "",
       statusClass: status.className,
       statusLabel: status.label,
       alerts: prediction.alerts || [],
@@ -596,6 +597,21 @@ module.exports = NodeHelper.create({
     }
 
     return `${raw} cars`;
+  },
+
+  formatClockTime(referenceTime, minutesFromNow) {
+    const reference = referenceTime instanceof Date ? referenceTime : new Date(referenceTime);
+    if (Number.isNaN(reference.getTime())) {
+      return "--:--";
+    }
+
+    const offsetMinutes = parseNumber(minutesFromNow, 0);
+    const totalMinutes = reference.getHours() * 60 + reference.getMinutes() + offsetMinutes;
+    const normalizedMinutes = ((totalMinutes % 1440) + 1440) % 1440;
+    const hours = String(Math.floor(normalizedMinutes / 60)).padStart(2, "0");
+    const minutes = String(normalizedMinutes % 60).padStart(2, "0");
+
+    return `${hours}:${minutes}`;
   },
 
   collectAlerts(predictions, incidents, profile) {

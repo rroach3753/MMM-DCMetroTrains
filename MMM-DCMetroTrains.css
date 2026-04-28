@@ -86,6 +86,7 @@
 .dcmetro--noBorders .dcmetro__stationCard--alert,
 .dcmetro--noBorders .dcmetro__summaryChip--stale,
 .dcmetro--noBorders .dcmetro__summaryChip--compact,
+.dcmetro--noBorders .dcmetro__firstLastLine,
 .dcmetro--noBorders .dcmetro__condition--normal,
 .dcmetro--noBorders .dcmetro__condition--alert,
 .dcmetro--noBorders .dcmetro__condition--delayed,
@@ -107,6 +108,7 @@
 .dcmetro--noBackground .dcmetro__busStop,
 .dcmetro--noBackground .dcmetro__summaryChip,
 .dcmetro--noBackground .dcmetro__chip,
+.dcmetro--noBackground .dcmetro__firstLastLine,
 .dcmetro--noBackground .dcmetro__condition,
 .dcmetro--noBackground .dcmetro__forecastChip,
 .dcmetro--noBackground .dcmetro__row--alert td {
@@ -305,6 +307,45 @@
   border: 1px solid rgba(255, 255, 255, 0.16);
   background: rgba(255, 255, 255, 0.04);
   white-space: nowrap;
+}
+
+.dcmetro__firstLast {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.dcmetro__firstLastLine {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--metro-border-strong);
+  border-radius: 12px;
+  padding: 6px 8px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.dcmetro__firstLastEntry {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: baseline;
+}
+
+.dcmetro__firstLastEntryLabel {
+  color: var(--metro-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 0.62rem;
+}
+
+.dcmetro__firstLastEntryValue {
+  color: var(--metro-text);
+}
+
+.dcmetro__firstLastSeparator {
+  font-size: 0.65rem;
 }
 
 .dcmetro__forecastChip--boarding,

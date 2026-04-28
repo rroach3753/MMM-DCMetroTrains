@@ -9,6 +9,12 @@ The format is based on Keep a Changelog.
 ### Added
 - Added this changelog to track releases and notable module updates.
 
+- Added optional first/last train summaries per line, with an all-lines override for stations where you always want the full line set.
+
+### Fixed
+- Removed the track column from the train table because WMATA does not expose a reliable track field.
+- Normalized first/last train clock times so late-night service rolls over correctly after midnight.
+
 ## [1.0.5] - 2026-04-25
 
 ### Fixed
