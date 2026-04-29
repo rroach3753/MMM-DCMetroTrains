@@ -9,6 +9,11 @@ The format is based on Keep a Changelog.
 ### Added
 - Added this changelog to track releases and notable module updates.
 
+## [1.0.7] - 2026-04-28
+
+### Removed
+- Removed track column and `showTrack` configuration option. WMATA prediction API does not expose track information.
+
 ## [1.0.6] - 2026-04-28
 
 ### Changed

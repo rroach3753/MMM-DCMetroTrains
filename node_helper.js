@@ -457,8 +457,7 @@ module.exports = NodeHelper.create({
           minutesRaw: item.Min,
           displayMinutes: this.formatMinutes(item.Min),
           minutesSort: this.normalizeMinutes(item.Min),
-          cars: item.Car,
-          track: item.TrackNum
+          cars: item.Car
         });
       });
 
@@ -523,7 +522,6 @@ module.exports = NodeHelper.create({
       cars: prediction.cars || "",
       carsLabel: this.formatCars(prediction.cars),
       carsClass,
-      track: prediction.track || "",
       statusClass: status.className,
       statusLabel: status.label,
       alerts: prediction.alerts || [],

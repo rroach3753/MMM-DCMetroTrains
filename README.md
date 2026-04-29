@@ -149,7 +149,6 @@ Add this to your `config/config.js` file:
     showFreshnessChip: true,
     showCars: true,
     showCarHighlights: false,
-    showTrack: true,
     showDirection: true,
     showStationCode: false,
     showStatus: true,
@@ -235,7 +234,6 @@ All other settings are optional and fall back to the defaults shown below.
 | `showFreshnessChip` | Boolean | No | `true` | Shows or hides the top summary chip labeled `Fresh` or `Stale`. |
 | `showCars` | Boolean | No | `true` | Shows or hides the train car-count column. Car badges are color-coded by train length. |
 | `showCarHighlights` | Boolean | No | `false` | Switches car badges to the older filled highlight-style format instead of the WMATA color palette. |
-| `showTrack` | Boolean | No | `true` | Shows or hides the track number column. |
 | `showDirection` | Boolean | No | `true` | Shows or hides the direction column (northbound/southbound). |
 | `showStationCode` | Boolean | No | `false` | Shows or hides station code chip in the header. |
 | `showStatus` | Boolean | No | `true` | Shows or hides the status badge column. |

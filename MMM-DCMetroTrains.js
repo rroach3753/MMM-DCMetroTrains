@@ -153,7 +153,6 @@ Module.register("MMM-DCMetroTrains", {
     showFreshnessChip: true,
     showCars: true,
     showCarHighlights: false,
-    showTrack: true,
     showDirection: true,
     showStationCode: false,
     showStatus: true,
@@ -520,9 +519,6 @@ Module.register("MMM-DCMetroTrains", {
     if (this.config.showCars) {
       columns.push("Cars");
     }
-    if (this.config.showTrack) {
-      columns.push("Track");
-    }
     if (this.config.showStatus) {
       columns.push("Status");
     }
@@ -570,13 +566,6 @@ Module.register("MMM-DCMetroTrains", {
         cars.className = `dcmetro__cars ${this.getCarsClassForMode(prediction)}`.trim();
         cars.textContent = prediction.carsLabel;
         row.appendChild(cars);
-      }
-
-      if (this.config.showTrack) {
-        const track = document.createElement("td");
-        track.className = "dcmetro__track dimmed";
-        track.textContent = prediction.track || "-";
-        row.appendChild(track);
       }
 
       if (this.config.showStatus) {
@@ -1113,7 +1102,6 @@ Module.register("MMM-DCMetroTrains", {
       cars: prediction.cars || "",
       carsLabel: this.formatCars(prediction.cars),
       carsClass,
-      track: prediction.track || "",
       statusClass: status.className,
       statusLabel: status.label,
       alerts: prediction.alerts || [],
