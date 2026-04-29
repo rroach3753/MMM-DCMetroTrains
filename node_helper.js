@@ -66,6 +66,7 @@ module.exports = NodeHelper.create({
     this.latestStations = [];
     this.latestBusStops = [];
     this.stationProfiles = [];
+    this.stationCodesByName = {};
     this.latestStationTimes = {};
     this.stationTimesLastFetchedAt = null;
   },
@@ -212,10 +213,29 @@ module.exports = NodeHelper.create({
     const response = await this.getJson(url);
     const stations = response.Stations || [];
 
-    this.stationMap = stations.reduce((accumulator, station) => {
-      accumulator[station.Code] = station.Name;
-      return accumulator;
-    }, {});
+    this.stationMap = {};
+    this.stationCodesByName = {};
+
+    stations.forEach((station) => {
+      const code = String(station.Code || "").trim();
+      const name = String(station.Name || "").trim();
+
+      if (!code) {
+        return;
+      }
+
+      this.stationMap[code] = name || code;
+
+      if (name) {
+        if (!this.stationCodesByName[name]) {
+          this.stationCodesByName[name] = [];
+        }
+
+        if (!this.stationCodesByName[name].includes(code)) {
+          this.stationCodesByName[name].push(code);
+        }
+      }
+    });
   },
 
   async fetchPredictions() {
@@ -282,84 +302,119 @@ module.exports = NodeHelper.create({
     const shouldFetch = !this.stationTimesLastFetchedAt || (now - this.stationTimesLastFetchedAt) > oneDayMs;
 
     if (shouldFetch) {
-      await this.fetchStationTimes();
-      this.stationTimesLastFetchedAt = now;
+      const fetched = await this.fetchStationTimes();
+      if (fetched) {
+        this.stationTimesLastFetchedAt = now;
+      }
     }
   },
 
   async fetchStationTimes() {
-    try {
-      const url = "https://api.wmata.com/Rail.svc/json/jStationTimes";
-      const response = await this.getJson(url);
-      const stationTimes = response.StationTimes || [];
+    const profileCodes = this.stationProfiles.map((profile) => profile.code).filter(Boolean);
+    const codesToFetch = new Set();
 
-      this.latestStationTimes = stationTimes.reduce((acc, item) => {
-        const code = item.Code || "";
-        if (!code) return acc;
-        if (!acc[code]) {
-          acc[code] = item;
-        }
-        return acc;
-      }, {});
-    } catch (error) {
-      this.latestStationTimes = {};
+    profileCodes.forEach((code) => {
+      this.getRelatedStationCodes(code).forEach((relatedCode) => codesToFetch.add(relatedCode));
+    });
+
+    if (!codesToFetch.size) {
+      return false;
     }
+
+    const mergedStationTimes = { ...this.latestStationTimes };
+    let successCount = 0;
+
+    await Promise.all([...codesToFetch].map(async (stationCode) => {
+      try {
+        const url = `https://api.wmata.com/Rail.svc/json/jStationTimes?StationCode=${encodeURIComponent(stationCode)}`;
+        const response = await this.getJson(url);
+        const entries = this.extractStationTimesEntries(response);
+        const selected = entries.find((entry) => String(entry.Code || "").trim() === stationCode) || entries[0] || null;
+
+        if (!selected) {
+          return;
+        }
+
+        mergedStationTimes[stationCode] = {
+          code: stationCode,
+          firstTrains: this.normalizeScheduleRows(selected.FirstTrains),
+          lastTrains: this.normalizeScheduleRows(selected.LastTrains)
+        };
+
+        successCount += 1;
+      } catch {
+        // Keep the last successful cached payload when a station request fails.
+      }
+    }));
+
+    if (successCount > 0) {
+      this.latestStationTimes = mergedStationTimes;
+      return true;
+    }
+
+    return false;
   },
 
   deriveFirstLastTrains(stationCode, profile) {
-    const stationTimeData = this.latestStationTimes[stationCode];
-    if (!stationTimeData) {
-      return {
-        northbound: { first: null, last: null },
-        southbound: { first: null, last: null }
-      };
-    }
-
+    const mode = String(profile && profile.firstLastTrainMode ? profile.firstLastTrainMode : "filtered").toLowerCase();
+    const scopedCodes = mode === "all" ? this.getRelatedStationCodes(stationCode) : [stationCode];
     const result = {
       northbound: { first: null, last: null },
       southbound: { first: null, last: null }
     };
 
-    const directions = ["RailLines"];
-    directions.forEach((dir) => {
-      const lines = stationTimeData[dir] || [];
-      lines.forEach((line) => {
-        const lineCode = line.LineCode || "";
-        const matchesFilter = profile && profile.lineFilter ? this.matchesLineFilter(lineCode, profile.lineFilter) : true;
+    const firstRows = [];
+    const lastRows = [];
 
-        if (!matchesFilter) {
+    scopedCodes.forEach((code) => {
+      const stationTimeData = this.latestStationTimes[code];
+      if (!stationTimeData) {
+        return;
+      }
+
+      stationTimeData.firstTrains.forEach((row) => {
+        if (mode === "filtered" && profile && profile.lineFilter && !this.matchesLineFilter(row.line, profile.lineFilter)) {
           return;
         }
 
-        const firstTrains = line.FirstTrains || [];
-        const lastTrains = line.LastTrains || [];
-
-        if (firstTrains.length > 0) {
-          const firstTrain = firstTrains[0];
-          const direction = firstTrain.DirectionNum === "1" ? "northbound" : "southbound";
-          const timeStr = this.normalizeStationTime(firstTrain.Time);
-          if (!result[direction].first) {
-            result[direction].first = {
-              line: lineCode,
-              time: timeStr,
-              destination: firstTrain.DestinationStation || "Unknown"
-            };
-          }
-        }
-
-        if (lastTrains.length > 0) {
-          const lastTrain = lastTrains[lastTrains.length - 1];
-          const direction = lastTrain.DirectionNum === "1" ? "northbound" : "southbound";
-          const timeStr = this.normalizeStationTime(lastTrain.Time);
-          if (!result[direction].last) {
-            result[direction].last = {
-              line: lineCode,
-              time: timeStr,
-              destination: lastTrain.DestinationStation || "Unknown"
-            };
-          }
-        }
+        firstRows.push(row);
       });
+
+      stationTimeData.lastTrains.forEach((row) => {
+        if (mode === "filtered" && profile && profile.lineFilter && !this.matchesLineFilter(row.line, profile.lineFilter)) {
+          return;
+        }
+
+        lastRows.push(row);
+      });
+    });
+
+    ["northbound", "southbound"].forEach((direction) => {
+      const firstByDirection = firstRows
+        .filter((row) => row.direction === direction)
+        .sort((a, b) => a.sortValue - b.sortValue);
+
+      const lastByDirection = lastRows
+        .filter((row) => row.direction === direction)
+        .sort((a, b) => b.sortValue - a.sortValue);
+
+      if (firstByDirection.length) {
+        const row = firstByDirection[0];
+        result[direction].first = {
+          line: row.line,
+          time: row.time,
+          destination: row.destination
+        };
+      }
+
+      if (lastByDirection.length) {
+        const row = lastByDirection[0];
+        result[direction].last = {
+          line: row.line,
+          time: row.time,
+          destination: row.destination
+        };
+      }
     });
 
     return result;
@@ -367,22 +422,147 @@ module.exports = NodeHelper.create({
 
   normalizeStationTime(timeStr) {
     const raw = String(timeStr || "").trim();
-    if (!raw || raw.length < 4) {
+    if (!raw) {
+      return "";
+    }
+
+    const colonMatch = raw.match(/^(\d{1,2}):(\d{2})$/);
+    if (colonMatch) {
+      const hour = parseNumber(colonMatch[1], NaN);
+      const minute = parseNumber(colonMatch[2], NaN);
+      if (Number.isFinite(hour) && Number.isFinite(minute)) {
+        return `${String(Math.max(0, hour)).padStart(2, "0")}:${String(Math.min(Math.max(0, minute), 59)).padStart(2, "0")}`;
+      }
       return raw;
     }
 
-    const hourStr = raw.substring(0, raw.length - 2);
-    const minStr = raw.substring(raw.length - 2);
+    const digitsOnly = raw.replace(/[^0-9]/g, "");
+    if (!digitsOnly || digitsOnly.length < 3 || digitsOnly.length > 4) {
+      return raw;
+    }
+
+    const hourStr = digitsOnly.substring(0, digitsOnly.length - 2);
+    const minStr = digitsOnly.substring(digitsOnly.length - 2);
     const hour = parseNumber(hourStr, 0);
     const min = parseNumber(minStr, 0);
 
-    const normalizedHour = hour >= 24 ? hour : hour;
-    const normalizedMin = min >= 60 ? 59 : min;
+    if (!Number.isFinite(hour) || !Number.isFinite(min)) {
+      return raw;
+    }
+
+    const normalizedHour = Math.max(0, hour);
+    const normalizedMin = Math.min(Math.max(0, min), 59);
 
     const paddedHour = String(normalizedHour).padStart(2, "0");
     const paddedMin = String(normalizedMin).padStart(2, "0");
 
     return `${paddedHour}:${paddedMin}`;
+  },
+
+  getRelatedStationCodes(stationCode) {
+    const code = String(stationCode || "").trim();
+    if (!code) {
+      return [];
+    }
+
+    const stationName = this.stationMap[code];
+    if (!stationName) {
+      return [code];
+    }
+
+    const related = Array.isArray(this.stationCodesByName[stationName]) ? this.stationCodesByName[stationName] : [];
+    const merged = new Set([code, ...related]);
+    return [...merged];
+  },
+
+  extractStationTimesEntries(response) {
+    if (!response) {
+      return [];
+    }
+
+    if (Array.isArray(response.StationTimes)) {
+      return response.StationTimes;
+    }
+
+    if (response.StationTimes && typeof response.StationTimes === "object") {
+      return [response.StationTimes];
+    }
+
+    if (Array.isArray(response)) {
+      return response;
+    }
+
+    if (response.FirstTrains || response.LastTrains) {
+      return [response];
+    }
+
+    return [];
+  },
+
+  normalizeScheduleRows(rows) {
+    if (!Array.isArray(rows)) {
+      return [];
+    }
+
+    return rows
+      .map((item) => {
+        const rawTime = item && (item.Time || item.ScheduleTime || item.DepartureTime || item.DepTime || "");
+        const time = this.normalizeStationTime(rawTime);
+        const sortValue = this.parseScheduleSortValue(rawTime);
+        const direction = this.normalizeScheduleDirection(item && (item.DirectionNum || item.Group || item.Direction || item.Dir));
+
+        return {
+          line: String((item && (item.LineCode || item.Line || item.LineAbbrev)) || "NA").toUpperCase(),
+          destination: String((item && (item.DestinationStationName || item.DestinationName || item.DestinationStation || item.Destination)) || "Unknown").trim() || "Unknown",
+          direction,
+          time,
+          sortValue
+        };
+      })
+      .filter((item) => (item.direction === "northbound" || item.direction === "southbound") && Number.isFinite(item.sortValue));
+  },
+
+  normalizeScheduleDirection(directionValue) {
+    const normalized = String(directionValue || "").trim().toLowerCase();
+    if (["1", "northbound", "north", "n", "nb"].includes(normalized)) {
+      return "northbound";
+    }
+
+    if (["2", "southbound", "south", "s", "sb"].includes(normalized)) {
+      return "southbound";
+    }
+
+    return null;
+  },
+
+  parseScheduleSortValue(rawTime) {
+    const raw = String(rawTime || "").trim();
+    if (!raw) {
+      return Number.POSITIVE_INFINITY;
+    }
+
+    const colonMatch = raw.match(/^(\d{1,2}):(\d{2})$/);
+    if (colonMatch) {
+      const hour = parseNumber(colonMatch[1], NaN);
+      const minute = parseNumber(colonMatch[2], NaN);
+      if (Number.isFinite(hour) && Number.isFinite(minute)) {
+        return (hour * 100) + minute;
+      }
+      return Number.POSITIVE_INFINITY;
+    }
+
+    const digitsOnly = raw.replace(/[^0-9]/g, "");
+    if (digitsOnly.length < 3 || digitsOnly.length > 4) {
+      return Number.POSITIVE_INFINITY;
+    }
+
+    const hour = parseNumber(digitsOnly.substring(0, digitsOnly.length - 2), NaN);
+    const minute = parseNumber(digitsOnly.substring(digitsOnly.length - 2), NaN);
+    if (!Number.isFinite(hour) || !Number.isFinite(minute)) {
+      return Number.POSITIVE_INFINITY;
+    }
+
+    return (hour * 100) + minute;
   },
 
   resolveMetroBusStopProfiles() {

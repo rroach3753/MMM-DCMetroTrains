@@ -474,10 +474,6 @@ Module.register("MMM-DCMetroTrains", {
       return null;
     }
 
-    const profile = station.profile || {};
-    const mode = profile.firstLastTrainMode || "filtered";
-    const showFiltered = mode === "filtered";
-
     const container = document.createElement("div");
     container.className = "dcmetro__firstLast";
 
@@ -487,9 +483,16 @@ Module.register("MMM-DCMetroTrains", {
     container.appendChild(title);
 
     const directions = ["northbound", "southbound"];
+    let hasAnyTimes = false;
     directions.forEach((dir) => {
       const data = firstLastData[dir];
       if (!data) return;
+
+      if (!data.first && !data.last) {
+        return;
+      }
+
+      hasAnyTimes = true;
 
       const directionSection = document.createElement("div");
       directionSection.className = `dcmetro__firstLastDir dcmetro__firstLastDir--${dir}`;
@@ -519,6 +522,10 @@ Module.register("MMM-DCMetroTrains", {
       directionSection.appendChild(times);
       container.appendChild(directionSection);
     });
+
+    if (!hasAnyTimes) {
+      return null;
+    }
 
     return container;
   },
