@@ -9,6 +9,15 @@ The format is based on Keep a Changelog.
 ### Added
 - Added this changelog to track releases and notable module updates.
 
+## [1.1.0] - 2026-04-28
+
+### Added
+- Optional first and last train of the day display via `showFirstLastTrains` configuration option (defaults to off).
+- Multi-platform station support for first/last trains with `firstLastTrainMode` option to show `"filtered"` (default) or `"all"` lines.
+- Daily caching of WMATA station service time data per WMATA API recommendations to reduce request load.
+- Separate styled summary block showing northbound and southbound first and last train times, rendered above the main arrivals table.
+- Per-station configuration overrides for `showFirstLastTrains` and `firstLastTrainMode` to customize behavior per station.
+
 ## [1.0.7] - 2026-04-28
 
 ### Removed

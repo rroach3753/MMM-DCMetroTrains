@@ -180,7 +180,9 @@ Module.register("MMM-DCMetroTrains", {
     autoCompact: true,
     commuteMaxRows: 5,
     compact: false,
-    animationSpeed: 1000
+    animationSpeed: 1000,
+    showFirstLastTrains: false,
+    firstLastTrainMode: "filtered"
   },
 
   start() {
@@ -371,6 +373,13 @@ Module.register("MMM-DCMetroTrains", {
       card.appendChild(this.buildForecastSummary(station.nextSummary));
     }
 
+    if (station.profile.showFirstLastTrains && station.firstLastTrains) {
+      const firstLastBlock = this.buildFirstLastTrainsBlock(station);
+      if (firstLastBlock) {
+        card.appendChild(firstLastBlock);
+      }
+    }
+
     card.appendChild(this.buildArrivals(station, isCompact));
     return card;
   },
@@ -457,6 +466,61 @@ Module.register("MMM-DCMetroTrains", {
     });
 
     return forecast;
+  },
+
+  buildFirstLastTrainsBlock(station) {
+    const firstLastData = station.firstLastTrains;
+    if (!firstLastData) {
+      return null;
+    }
+
+    const profile = station.profile || {};
+    const mode = profile.firstLastTrainMode || "filtered";
+    const showFiltered = mode === "filtered";
+
+    const container = document.createElement("div");
+    container.className = "dcmetro__firstLast";
+
+    const title = document.createElement("div");
+    title.className = "dcmetro__firstLastTitle small dimmed";
+    title.textContent = "First & Last Service";
+    container.appendChild(title);
+
+    const directions = ["northbound", "southbound"];
+    directions.forEach((dir) => {
+      const data = firstLastData[dir];
+      if (!data) return;
+
+      const directionSection = document.createElement("div");
+      directionSection.className = `dcmetro__firstLastDir dcmetro__firstLastDir--${dir}`;
+
+      const dirLabel = document.createElement("span");
+      dirLabel.className = "dcmetro__firstLastDirLabel xsmall dimmed";
+      dirLabel.textContent = dir === "northbound" ? "NB" : "SB";
+      directionSection.appendChild(dirLabel);
+
+      const times = document.createElement("span");
+      times.className = "dcmetro__firstLastTimes";
+
+      if (data.first) {
+        const firstSpan = document.createElement("span");
+        firstSpan.className = "dcmetro__firstLastTime";
+        firstSpan.textContent = `First: ${data.first.time}`;
+        times.appendChild(firstSpan);
+      }
+
+      if (data.last) {
+        const lastSpan = document.createElement("span");
+        lastSpan.className = "dcmetro__firstLastTime";
+        lastSpan.textContent = `Last: ${data.last.time}`;
+        times.appendChild(lastSpan);
+      }
+
+      directionSection.appendChild(times);
+      container.appendChild(directionSection);
+    });
+
+    return container;
   },
 
   buildArrivals(station, isCompact) {
@@ -821,6 +885,8 @@ Module.register("MMM-DCMetroTrains", {
       groupByLine: isObject && entry.groupByLine != null ? Boolean(entry.groupByLine) : Boolean(this.config.groupByLine),
       showIncidents: isObject && entry.showIncidents != null ? Boolean(entry.showIncidents) : Boolean(this.config.showIncidents),
       alerts: normalizeList(isObject && entry.alerts ? entry.alerts : this.config.alertRules),
+      showFirstLastTrains: isObject && entry.showFirstLastTrains != null ? Boolean(entry.showFirstLastTrains) : Boolean(this.config.showFirstLastTrains),
+      firstLastTrainMode: isObject && entry.firstLastTrainMode ? String(entry.firstLastTrainMode).toLowerCase() : String(this.config.firstLastTrainMode || "filtered").toLowerCase(),
       priority: parseNumber(isObject && entry.priority != null ? entry.priority : index, index)
     };
 

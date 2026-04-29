@@ -66,6 +66,8 @@ module.exports = NodeHelper.create({
     this.latestStations = [];
     this.latestBusStops = [];
     this.stationProfiles = [];
+    this.latestStationTimes = {};
+    this.stationTimesLastFetchedAt = null;
   },
 
   socketNotificationReceived(notification, payload) {
@@ -93,6 +95,7 @@ module.exports = NodeHelper.create({
         this.stationMap = {};
       } else {
         await this.fetchStations();
+        await this.fetchStationTimesIfNeeded();
       }
       await this.refreshPredictionsAndWeather();
       await this.refreshIncidents();
@@ -181,6 +184,9 @@ module.exports = NodeHelper.create({
       const grouped = this.groupPredictionsByStation(predictions);
       this.latestWeather = weather;
       this.latestBusStops = busStops;
+      if (!metroBusOnly) {
+        await this.fetchStationTimesIfNeeded();
+      }
       this.latestStations = metroBusOnly ? [] : this.buildStationPayload(grouped, this.latestIncidents, weather);
       this.broadcastData();
     } catch (error) {
@@ -268,6 +274,115 @@ module.exports = NodeHelper.create({
       weathercode: weather.weathercode,
       isDay: weather.is_day
     };
+  },
+
+  async fetchStationTimesIfNeeded() {
+    const now = Date.now();
+    const oneDayMs = 24 * 60 * 60 * 1000;
+    const shouldFetch = !this.stationTimesLastFetchedAt || (now - this.stationTimesLastFetchedAt) > oneDayMs;
+
+    if (shouldFetch) {
+      await this.fetchStationTimes();
+      this.stationTimesLastFetchedAt = now;
+    }
+  },
+
+  async fetchStationTimes() {
+    try {
+      const url = "https://api.wmata.com/Rail.svc/json/jStationTimes";
+      const response = await this.getJson(url);
+      const stationTimes = response.StationTimes || [];
+
+      this.latestStationTimes = stationTimes.reduce((acc, item) => {
+        const code = item.Code || "";
+        if (!code) return acc;
+        if (!acc[code]) {
+          acc[code] = item;
+        }
+        return acc;
+      }, {});
+    } catch (error) {
+      this.latestStationTimes = {};
+    }
+  },
+
+  deriveFirstLastTrains(stationCode, profile) {
+    const stationTimeData = this.latestStationTimes[stationCode];
+    if (!stationTimeData) {
+      return {
+        northbound: { first: null, last: null },
+        southbound: { first: null, last: null }
+      };
+    }
+
+    const result = {
+      northbound: { first: null, last: null },
+      southbound: { first: null, last: null }
+    };
+
+    const directions = ["RailLines"];
+    directions.forEach((dir) => {
+      const lines = stationTimeData[dir] || [];
+      lines.forEach((line) => {
+        const lineCode = line.LineCode || "";
+        const matchesFilter = profile && profile.lineFilter ? this.matchesLineFilter(lineCode, profile.lineFilter) : true;
+
+        if (!matchesFilter) {
+          return;
+        }
+
+        const firstTrains = line.FirstTrains || [];
+        const lastTrains = line.LastTrains || [];
+
+        if (firstTrains.length > 0) {
+          const firstTrain = firstTrains[0];
+          const direction = firstTrain.DirectionNum === "1" ? "northbound" : "southbound";
+          const timeStr = this.normalizeStationTime(firstTrain.Time);
+          if (!result[direction].first) {
+            result[direction].first = {
+              line: lineCode,
+              time: timeStr,
+              destination: firstTrain.DestinationStation || "Unknown"
+            };
+          }
+        }
+
+        if (lastTrains.length > 0) {
+          const lastTrain = lastTrains[lastTrains.length - 1];
+          const direction = lastTrain.DirectionNum === "1" ? "northbound" : "southbound";
+          const timeStr = this.normalizeStationTime(lastTrain.Time);
+          if (!result[direction].last) {
+            result[direction].last = {
+              line: lineCode,
+              time: timeStr,
+              destination: lastTrain.DestinationStation || "Unknown"
+            };
+          }
+        }
+      });
+    });
+
+    return result;
+  },
+
+  normalizeStationTime(timeStr) {
+    const raw = String(timeStr || "").trim();
+    if (!raw || raw.length < 4) {
+      return raw;
+    }
+
+    const hourStr = raw.substring(0, raw.length - 2);
+    const minStr = raw.substring(raw.length - 2);
+    const hour = parseNumber(hourStr, 0);
+    const min = parseNumber(minStr, 0);
+
+    const normalizedHour = hour >= 24 ? hour : hour;
+    const normalizedMin = min >= 60 ? 59 : min;
+
+    const paddedHour = String(normalizedHour).padStart(2, "0");
+    const paddedMin = String(normalizedMin).padStart(2, "0");
+
+    return `${paddedHour}:${paddedMin}`;
   },
 
   resolveMetroBusStopProfiles() {
@@ -430,6 +545,8 @@ module.exports = NodeHelper.create({
       groupByLine: isObject && entry.groupByLine != null ? Boolean(entry.groupByLine) : Boolean(this.config.groupByLine),
       showIncidents: isObject && entry.showIncidents != null ? Boolean(entry.showIncidents) : Boolean(this.config.showIncidents),
       alerts: isObject && entry.alerts ? normalizeList(entry.alerts) : normalizeList(this.config.alertRules),
+      showFirstLastTrains: isObject && entry.showFirstLastTrains != null ? Boolean(entry.showFirstLastTrains) : Boolean(this.config.showFirstLastTrains),
+      firstLastTrainMode: isObject && entry.firstLastTrainMode ? String(entry.firstLastTrainMode).toLowerCase() : String(this.config.firstLastTrainMode || "filtered").toLowerCase(),
       priority: parseNumber(isObject && entry.priority != null ? entry.priority : index, index)
     };
   },
@@ -484,6 +601,7 @@ module.exports = NodeHelper.create({
       const groupedByLine = this.groupPredictionsByLine(predictions);
       const alerts = this.collectAlerts(predictions, incidents, profile);
       const condition = this.buildConditionSummary(predictions, incidents, weather, now);
+      const firstLastTrains = this.deriveFirstLastTrains(profile.code, profile);
 
       return {
         code: profile.code,
@@ -495,7 +613,8 @@ module.exports = NodeHelper.create({
         nextSummary: predictions.slice(0, parseNumber(this.config.summaryCount, 3)),
         alerts,
         conditionText: condition.text,
-        conditionClass: condition.className
+        conditionClass: condition.className,
+        firstLastTrains
       };
     });
   },

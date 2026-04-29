@@ -256,6 +256,8 @@ All other settings are optional and fall back to the defaults shown below.
 | `commuteMaxRows` | Number | No | `5` | Maximum rows shown during commute/compact windows. |
 | `compact` | Boolean | No | `false` | Forces the compact layout at all times. |
 | `animationSpeed` | Number | No | `1000` | DOM update animation speed in milliseconds. |
+| `showFirstLastTrains` | Boolean | No | `false` | Shows or hides the first and last train of the day summaries for each station. |
+| `firstLastTrainMode` | String | No | `"filtered"` | For multi-platform stations, controls whether to show first/last data for `"filtered"` lines only or `"all"` lines. Only applies when `showFirstLastTrains` is enabled. |
 
 ## Notes
 
