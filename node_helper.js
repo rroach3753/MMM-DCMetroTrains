@@ -50,9 +50,100 @@ function parseBoolean(value, fallback) {
   return Boolean(value);
 }
 
-function lineWeight(lineCode) {
+function lineSortWeight(lineCode) {
   return LINE_ORDER[String(lineCode || "NA").toUpperCase()] || 90;
 }
+
+function pluralize(count, word) {
+  return `${count} ${word}${count === 1 ? "" : "s"}`;
+}
+
+function ensureArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function safeString(value) {
+  return String(value || "").trim();
+}
+
+function limitArray(array, maxLength) {
+  return array.slice(0, Math.max(1, maxLength));
+}
+
+function sortCopy(array, compareFn) {
+  return array.slice(0).sort(compareFn);
+}
+
+function normalizeLineCode(code, fallback) {
+  return String(code || fallback || "NA").toUpperCase();
+}
+
+function calculateLineWeight(lineCode, customOrder) {
+  const normalizedLine = normalizeLineCode(lineCode);
+  const index = customOrder.indexOf(normalizedLine);
+  if (index >= 0) {
+    return index + 1;
+  }
+
+  return LINE_ORDER[String(lineCode || "NA").toUpperCase()] || 90;
+}
+
+function createPredictionGroups(predictions, lineOrder, getLineWeightFn) {
+  const grouped = {};
+  const customOrder = normalizeList(lineOrder).map((entry) => entry.toUpperCase());
+
+  predictions.forEach((prediction) => {
+    const line = normalizeLineCode(prediction.line);
+    if (!grouped[line]) {
+      grouped[line] = [];
+    }
+
+    grouped[line].push(prediction);
+  });
+
+  return Object.keys(grouped)
+    .sort((a, b) => getLineWeightFn(a, customOrder) - getLineWeightFn(b, customOrder))
+    .map((line) => ({
+      line,
+      predictions: sortCopy(grouped[line], (a, b) => {
+        if (a.minutesSort !== b.minutesSort) {
+          return a.minutesSort - b.minutesSort;
+        }
+
+        return a.destination.localeCompare(b.destination);
+      })
+    }));
+}
+
+function formatWeatherDisplay(weather) {
+  const temperature = Math.round(Number(weather.temperature));
+  const summary = weatherSummary(weather.weathercode);
+  return `${Number.isFinite(temperature) ? `${temperature}°F` : "Weather"} ${summary}`.trim();
+}
+
+function normalizeLineOrderToUpperCase(lineOrder) {
+  return normalizeList(lineOrder).map((entry) => entry.toUpperCase());
+}
+
+function normalizeLowercase(value, fallback) {
+  return String(value || fallback || "").toLowerCase();
+}
+
+function isEmpty(array) {
+  return !array || !array.length;
+}
+
+function isNotEmpty(array) {
+  return array && array.length > 0;
+}
+
+const NA_LINE = "NA";
+const SEVERITY_RANK = {
+  all: 0,
+  advisory: 1,
+  major: 2,
+  critical: 3
+};
 
 module.exports = NodeHelper.create({
   start() {
@@ -66,9 +157,70 @@ module.exports = NodeHelper.create({
     this.latestStations = [];
     this.latestBusStops = [];
     this.stationProfiles = [];
+    this.busStopProfiles = [];
     this.stationCodesByName = {};
-    this.latestStationTimes = {};
-    this.stationTimesLastFetchedAt = null;
+    this.normalizedLineOrderCache = [];
+  },
+
+  stop() {
+    this.stopTimers();
+    this.clearRetryTimer();
+  },
+
+  validateConfig() {
+    const errors = [];
+    const config = this.config || {};
+
+    if (!config.apiKey) {
+      errors.push("Missing apiKey");
+    }
+
+    if (config.stationCodes != null && !Array.isArray(config.stationCodes) && typeof config.stationCodes !== "string") {
+      errors.push("stationCodes must be an array or string");
+    }
+
+    if (typeof config.stationCodes === "string" && !config.stationCodes.trim()) {
+      errors.push("stationCodes string cannot be empty");
+    }
+
+    if (Array.isArray(config.stationCodes)) {
+      const hasInvalidEntry = config.stationCodes.some((entry) => {
+        const isObject = entry && typeof entry === "object" && !Array.isArray(entry);
+        const rawCode = isObject ? entry.code || entry.stationCode || entry.id : entry;
+        return !String(rawCode || "").trim();
+      });
+
+      if (hasInvalidEntry) {
+        errors.push("stationCodes contains an empty or invalid station code entry");
+      }
+    }
+
+    const maxRows = parseNumber(config.maxRows, null);
+    if (config.maxRows != null && (!Number.isFinite(maxRows) || maxRows < 1)) {
+      errors.push("maxRows must be >= 1");
+    }
+
+    const refreshInterval = parseNumber(config.refreshInterval, null);
+    if (config.refreshInterval != null && (!Number.isFinite(refreshInterval) || refreshInterval < 5000)) {
+      errors.push("refreshInterval must be >= 5000 ms");
+    }
+
+    const incidentsRefreshInterval = parseNumber(config.incidentsRefreshInterval, null);
+    if (config.incidentsRefreshInterval != null && (!Number.isFinite(incidentsRefreshInterval) || incidentsRefreshInterval < 5000)) {
+      errors.push("incidentsRefreshInterval must be >= 5000 ms");
+    }
+
+    const retryDelay = parseNumber(config.retryDelay, null);
+    if (config.retryDelay != null && (!Number.isFinite(retryDelay) || retryDelay < 1000)) {
+      errors.push("retryDelay must be >= 1000 ms");
+    }
+
+    if (errors.length > 0) {
+      console.error("[MMM-DCMetroTrains] Config validation errors:", errors.join("; "));
+      return false;
+    }
+
+    return true;
   },
 
   socketNotificationReceived(notification, payload) {
@@ -77,12 +229,15 @@ module.exports = NodeHelper.create({
     }
 
     this.config = payload || {};
-    this.stationProfiles = this.resolveStationProfiles();
 
-    if (!this.config.apiKey) {
-      this.sendSocketNotification("DC_METRO_ERROR", "Missing apiKey in MMM-DCMetroTrains config.");
+    if (!this.validateConfig()) {
+      this.sendSocketNotification("DC_METRO_ERROR", "Invalid MMM-DCMetroTrains configuration. Check server logs for details.");
       return;
     }
+
+    this.stationProfiles = this.resolveStationProfiles();
+    this.busStopProfiles = this.resolveMetroBusStopProfiles();
+    this.normalizedLineOrderCache = normalizeLineOrderToUpperCase(this.config.lineOrder);
 
     this.initialize();
   },
@@ -96,7 +251,7 @@ module.exports = NodeHelper.create({
         this.stationMap = {};
       } else {
         await this.fetchStations();
-        await this.fetchStationTimesIfNeeded();
+        this.validateStationProfiles();
       }
       await this.refreshPredictionsAndWeather();
       await this.refreshIncidents();
@@ -109,19 +264,19 @@ module.exports = NodeHelper.create({
   },
 
   stopTimers() {
-    if (this.fetchTimer) {
-      clearTimeout(this.fetchTimer);
-      this.fetchTimer = null;
-    }
+    this.clearTimer("fetchTimer");
+    this.clearTimer("incidentTimer");
+  },
 
-    if (this.incidentTimer) {
-      clearTimeout(this.incidentTimer);
-      this.incidentTimer = null;
+  clearTimer(timerName) {
+    if (this[timerName]) {
+      clearTimeout(this[timerName]);
+      this[timerName] = null;
     }
   },
 
   scheduleNextPredictionRefresh() {
-    const interval = parseNumber(this.config.refreshInterval, 30000);
+    const interval = Math.max(5000, this.getConfigNumber("refreshInterval", 30000));
     this.fetchTimer = setTimeout(async () => {
       await this.refreshPredictionsAndWeather();
       this.scheduleNextPredictionRefresh();
@@ -129,7 +284,7 @@ module.exports = NodeHelper.create({
   },
 
   scheduleNextIncidentRefresh() {
-    const interval = parseNumber(this.config.incidentsRefreshInterval, 120000);
+    const interval = Math.max(5000, this.getConfigNumber("incidentsRefreshInterval", 120000));
     this.incidentTimer = setTimeout(async () => {
       await this.refreshIncidents();
       this.scheduleNextIncidentRefresh();
@@ -137,7 +292,7 @@ module.exports = NodeHelper.create({
   },
 
   withJitter(baseInterval) {
-    const jitter = Math.max(0, parseNumber(this.config.updateJitterMs, 0));
+    const jitter = Math.max(0, this.getConfigNumber("updateJitterMs", 0));
     if (!jitter) {
       return baseInterval;
     }
@@ -147,15 +302,13 @@ module.exports = NodeHelper.create({
   },
 
   clearRetryTimer() {
-    if (this.retryTimer) {
-      clearTimeout(this.retryTimer);
-      this.retryTimer = null;
-    }
+    this.clearTimer("retryTimer");
   },
 
   scheduleRetry() {
     this.clearRetryTimer();
-    this.retryTimer = setTimeout(() => this.initialize(), this.config.retryDelay);
+    const retryDelay = Math.max(1000, this.getConfigNumber("retryDelay", 15000));
+    this.retryTimer = setTimeout(() => this.initialize(), retryDelay);
   },
 
   reportError(message) {
@@ -182,13 +335,14 @@ module.exports = NodeHelper.create({
         this.fetchMetroBusPredictions()
       ]);
 
+      // Build complete data set before updating module state (atomic update)
       const grouped = this.groupPredictionsByStation(predictions);
+      const newStations = metroBusOnly ? [] : this.buildStationPayload(grouped, this.latestIncidents, weather);
+
+      // Update state atomically
       this.latestWeather = weather;
       this.latestBusStops = busStops;
-      if (!metroBusOnly) {
-        await this.fetchStationTimesIfNeeded();
-      }
-      this.latestStations = metroBusOnly ? [] : this.buildStationPayload(grouped, this.latestIncidents, weather);
+      this.latestStations = newStations;
       this.broadcastData();
     } catch (error) {
       this.reportError(`DC Metro update failed: ${error.message}`);
@@ -203,7 +357,8 @@ module.exports = NodeHelper.create({
       if (this.latestStations.length) {
         this.broadcastData();
       }
-    } catch {
+    } catch (error) {
+      console.warn("[MMM-DCMetroTrains] Failed to refresh incidents:", error.message);
       this.latestIncidents = [];
     }
   },
@@ -227,15 +382,28 @@ module.exports = NodeHelper.create({
       this.stationMap[code] = name || code;
 
       if (name) {
-        if (!this.stationCodesByName[name]) {
-          this.stationCodesByName[name] = [];
-        }
-
-        if (!this.stationCodesByName[name].includes(code)) {
-          this.stationCodesByName[name].push(code);
+        const list = (this.stationCodesByName[name] ??= []);
+        if (!list.includes(code)) {
+          list.push(code);
         }
       }
     });
+  },
+
+  validateStationProfiles() {
+    const validCodes = Object.keys(this.stationMap);
+    const invalidProfiles = this.stationProfiles.filter(
+      (profile) => !validCodes.includes(profile.code)
+    );
+
+    if (invalidProfiles.length > 0) {
+      const invalidCodes = invalidProfiles.map((p) => p.code).join(", ");
+      const sample = validCodes.slice(0, 5).join(", ");
+      const suffix = validCodes.length > 5 ? ` ... (${validCodes.length - 5} more)` : "";
+      console.warn(
+        `[MMM-DCMetroTrains] Configured station code(s) not found in WMATA: ${invalidCodes}. Sample valid: ${sample}${suffix}`
+      );
+    }
   },
 
   async fetchPredictions() {
@@ -273,10 +441,15 @@ module.exports = NodeHelper.create({
   },
 
   async fetchWeather() {
-    const latitude = parseNumber(this.config.weatherLatitude, null);
-    const longitude = parseNumber(this.config.weatherLongitude, null);
+    const latitude = this.getConfigNumber("weatherLatitude", null);
+    const longitude = this.getConfigNumber("weatherLongitude", null);
 
     if (!this.config.showWeather || latitude == null || longitude == null) {
+      return null;
+    }
+
+    if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
+      console.warn("[MMM-DCMetroTrains] Invalid weather coordinates: latitude must be between -90 and 90, longitude between -180 and 180.");
       return null;
     }
 
@@ -290,283 +463,13 @@ module.exports = NodeHelper.create({
 
     return {
       temperature: weather.temperature,
-      windspeed: weather.windspeed,
       weathercode: weather.weathercode,
       isDay: weather.is_day
     };
   },
 
-  async fetchStationTimesIfNeeded() {
-    const now = Date.now();
-    const oneDayMs = 24 * 60 * 60 * 1000;
-    const shouldFetch = !this.stationTimesLastFetchedAt || (now - this.stationTimesLastFetchedAt) > oneDayMs;
-
-    if (shouldFetch) {
-      const fetched = await this.fetchStationTimes();
-      if (fetched) {
-        this.stationTimesLastFetchedAt = now;
-      }
-    }
-  },
-
-  async fetchStationTimes() {
-    const profileCodes = this.stationProfiles.map((profile) => profile.code).filter(Boolean);
-    const codesToFetch = new Set();
-
-    profileCodes.forEach((code) => {
-      this.getRelatedStationCodes(code).forEach((relatedCode) => codesToFetch.add(relatedCode));
-    });
-
-    if (!codesToFetch.size) {
-      return false;
-    }
-
-    const mergedStationTimes = { ...this.latestStationTimes };
-    let successCount = 0;
-
-    await Promise.all([...codesToFetch].map(async (stationCode) => {
-      try {
-        const url = `https://api.wmata.com/Rail.svc/json/jStationTimes?StationCode=${encodeURIComponent(stationCode)}`;
-        const response = await this.getJson(url);
-        const entries = this.extractStationTimesEntries(response);
-        const selected = entries.find((entry) => String(entry.Code || "").trim() === stationCode) || entries[0] || null;
-
-        if (!selected) {
-          return;
-        }
-
-        mergedStationTimes[stationCode] = {
-          code: stationCode,
-          firstTrains: this.normalizeScheduleRows(selected.FirstTrains),
-          lastTrains: this.normalizeScheduleRows(selected.LastTrains)
-        };
-
-        successCount += 1;
-      } catch {
-        // Keep the last successful cached payload when a station request fails.
-      }
-    }));
-
-    if (successCount > 0) {
-      this.latestStationTimes = mergedStationTimes;
-      return true;
-    }
-
-    return false;
-  },
-
-  deriveFirstLastTrains(stationCode, profile) {
-    const mode = String(profile && profile.firstLastTrainMode ? profile.firstLastTrainMode : "filtered").toLowerCase();
-    const scopedCodes = mode === "all" ? this.getRelatedStationCodes(stationCode) : [stationCode];
-    const result = {
-      northbound: { first: null, last: null },
-      southbound: { first: null, last: null }
-    };
-
-    const firstRows = [];
-    const lastRows = [];
-
-    scopedCodes.forEach((code) => {
-      const stationTimeData = this.latestStationTimes[code];
-      if (!stationTimeData) {
-        return;
-      }
-
-      stationTimeData.firstTrains.forEach((row) => {
-        if (mode === "filtered" && profile && profile.lineFilter && !this.matchesLineFilter(row.line, profile.lineFilter)) {
-          return;
-        }
-
-        firstRows.push(row);
-      });
-
-      stationTimeData.lastTrains.forEach((row) => {
-        if (mode === "filtered" && profile && profile.lineFilter && !this.matchesLineFilter(row.line, profile.lineFilter)) {
-          return;
-        }
-
-        lastRows.push(row);
-      });
-    });
-
-    ["northbound", "southbound"].forEach((direction) => {
-      const firstByDirection = firstRows
-        .filter((row) => row.direction === direction)
-        .sort((a, b) => a.sortValue - b.sortValue);
-
-      const lastByDirection = lastRows
-        .filter((row) => row.direction === direction)
-        .sort((a, b) => b.sortValue - a.sortValue);
-
-      if (firstByDirection.length) {
-        const row = firstByDirection[0];
-        result[direction].first = {
-          line: row.line,
-          time: row.time,
-          destination: row.destination
-        };
-      }
-
-      if (lastByDirection.length) {
-        const row = lastByDirection[0];
-        result[direction].last = {
-          line: row.line,
-          time: row.time,
-          destination: row.destination
-        };
-      }
-    });
-
-    return result;
-  },
-
-  normalizeStationTime(timeStr) {
-    const raw = String(timeStr || "").trim();
-    if (!raw) {
-      return "";
-    }
-
-    const colonMatch = raw.match(/^(\d{1,2}):(\d{2})$/);
-    if (colonMatch) {
-      const hour = parseNumber(colonMatch[1], NaN);
-      const minute = parseNumber(colonMatch[2], NaN);
-      if (Number.isFinite(hour) && Number.isFinite(minute)) {
-        return `${String(Math.max(0, hour)).padStart(2, "0")}:${String(Math.min(Math.max(0, minute), 59)).padStart(2, "0")}`;
-      }
-      return raw;
-    }
-
-    const digitsOnly = raw.replace(/[^0-9]/g, "");
-    if (!digitsOnly || digitsOnly.length < 3 || digitsOnly.length > 4) {
-      return raw;
-    }
-
-    const hourStr = digitsOnly.substring(0, digitsOnly.length - 2);
-    const minStr = digitsOnly.substring(digitsOnly.length - 2);
-    const hour = parseNumber(hourStr, 0);
-    const min = parseNumber(minStr, 0);
-
-    if (!Number.isFinite(hour) || !Number.isFinite(min)) {
-      return raw;
-    }
-
-    const normalizedHour = Math.max(0, hour);
-    const normalizedMin = Math.min(Math.max(0, min), 59);
-
-    const paddedHour = String(normalizedHour).padStart(2, "0");
-    const paddedMin = String(normalizedMin).padStart(2, "0");
-
-    return `${paddedHour}:${paddedMin}`;
-  },
-
-  getRelatedStationCodes(stationCode) {
-    const code = String(stationCode || "").trim();
-    if (!code) {
-      return [];
-    }
-
-    const stationName = this.stationMap[code];
-    if (!stationName) {
-      return [code];
-    }
-
-    const related = Array.isArray(this.stationCodesByName[stationName]) ? this.stationCodesByName[stationName] : [];
-    const merged = new Set([code, ...related]);
-    return [...merged];
-  },
-
-  extractStationTimesEntries(response) {
-    if (!response) {
-      return [];
-    }
-
-    if (Array.isArray(response.StationTimes)) {
-      return response.StationTimes;
-    }
-
-    if (response.StationTimes && typeof response.StationTimes === "object") {
-      return [response.StationTimes];
-    }
-
-    if (Array.isArray(response)) {
-      return response;
-    }
-
-    if (response.FirstTrains || response.LastTrains) {
-      return [response];
-    }
-
-    return [];
-  },
-
-  normalizeScheduleRows(rows) {
-    if (!Array.isArray(rows)) {
-      return [];
-    }
-
-    return rows
-      .map((item) => {
-        const rawTime = item && (item.Time || item.ScheduleTime || item.DepartureTime || item.DepTime || "");
-        const time = this.normalizeStationTime(rawTime);
-        const sortValue = this.parseScheduleSortValue(rawTime);
-        const direction = this.normalizeScheduleDirection(item && (item.DirectionNum || item.Group || item.Direction || item.Dir));
-
-        return {
-          line: String((item && (item.LineCode || item.Line || item.LineAbbrev)) || "NA").toUpperCase(),
-          destination: String((item && (item.DestinationStationName || item.DestinationName || item.DestinationStation || item.Destination)) || "Unknown").trim() || "Unknown",
-          direction,
-          time,
-          sortValue
-        };
-      })
-      .filter((item) => (item.direction === "northbound" || item.direction === "southbound") && Number.isFinite(item.sortValue));
-  },
-
-  normalizeScheduleDirection(directionValue) {
-    const normalized = String(directionValue || "").trim().toLowerCase();
-    if (["1", "northbound", "north", "n", "nb"].includes(normalized)) {
-      return "northbound";
-    }
-
-    if (["2", "southbound", "south", "s", "sb"].includes(normalized)) {
-      return "southbound";
-    }
-
-    return null;
-  },
-
-  parseScheduleSortValue(rawTime) {
-    const raw = String(rawTime || "").trim();
-    if (!raw) {
-      return Number.POSITIVE_INFINITY;
-    }
-
-    const colonMatch = raw.match(/^(\d{1,2}):(\d{2})$/);
-    if (colonMatch) {
-      const hour = parseNumber(colonMatch[1], NaN);
-      const minute = parseNumber(colonMatch[2], NaN);
-      if (Number.isFinite(hour) && Number.isFinite(minute)) {
-        return (hour * 100) + minute;
-      }
-      return Number.POSITIVE_INFINITY;
-    }
-
-    const digitsOnly = raw.replace(/[^0-9]/g, "");
-    if (digitsOnly.length < 3 || digitsOnly.length > 4) {
-      return Number.POSITIVE_INFINITY;
-    }
-
-    const hour = parseNumber(digitsOnly.substring(0, digitsOnly.length - 2), NaN);
-    const minute = parseNumber(digitsOnly.substring(digitsOnly.length - 2), NaN);
-    if (!Number.isFinite(hour) || !Number.isFinite(minute)) {
-      return Number.POSITIVE_INFINITY;
-    }
-
-    return (hour * 100) + minute;
-  },
-
   resolveMetroBusStopProfiles() {
-    const configuredStops = Array.isArray(this.config.metroBusStops) ? this.config.metroBusStops : [];
+    const configuredStops = ensureArray(this.config.metroBusStops);
 
     return configuredStops
       .map((entry, index) => this.normalizeMetroBusStopProfile(entry, index))
@@ -595,7 +498,7 @@ module.exports = NodeHelper.create({
       return [];
     }
 
-    const stopProfiles = this.resolveMetroBusStopProfiles();
+    const stopProfiles = this.busStopProfiles;
     if (!stopProfiles.length) {
       return [];
     }
@@ -604,18 +507,18 @@ module.exports = NodeHelper.create({
       try {
         const url = `https://api.wmata.com/NextBusService.svc/json/jPredictions?StopID=${encodeURIComponent(profile.stopId)}`;
         const response = await this.getJson(url);
-        const rawPredictions = Array.isArray(response.Predictions) ? response.Predictions : [];
+        const rawPredictions = ensureArray(response.Predictions);
 
         const predictions = rawPredictions
-          .filter((prediction) => this.matchesBusRouteFilter(prediction.RouteID || prediction.Route, profile.routeFilter))
+          .filter((prediction) => this.matchesLineFilter(prediction.RouteID || prediction.Route, profile.routeFilter))
           .map((prediction) => {
             const minutesRaw = prediction.Minutes != null ? prediction.Minutes : prediction.Min;
             return {
               route: prediction.RouteID || prediction.Route || "--",
               destination: prediction.DirectionText || prediction.TripHeadSign || prediction.DestinationName || "Unknown",
               direction: prediction.DirectionText || prediction.Direction || "-",
-              displayMinutes: this.formatBusMinutes(minutesRaw),
-              minutesSort: this.normalizeBusMinutes(minutesRaw)
+              displayMinutes: this.formatDisplayMinutes(minutesRaw),
+              minutesSort: this.normalizeMinutesSort(minutesRaw)
             };
           })
           .sort((a, b) => {
@@ -624,15 +527,17 @@ module.exports = NodeHelper.create({
             }
 
             return String(a.route).localeCompare(String(b.route));
-          })
-          .slice(0, Math.max(1, profile.maxRows));
+          });
+
+        const limitedPredictions = limitArray(predictions, profile.maxRows);
 
         return {
           stopId: profile.stopId,
           name: profile.name || response.StopName || profile.stopId,
-          predictions
+          predictions: limitedPredictions
         };
-      } catch {
+      } catch (error) {
+        console.warn(`[MMM-DCMetroTrains] Failed to fetch Metrobus predictions for stop ${profile.stopId}:`, error.message);
         return {
           stopId: profile.stopId,
           name: profile.name || profile.stopId,
@@ -641,45 +546,11 @@ module.exports = NodeHelper.create({
       }
     }));
 
-    return stops.sort((a, b) => {
-      const pa = stopProfiles.find((item) => item.stopId === a.stopId);
-      const pb = stopProfiles.find((item) => item.stopId === b.stopId);
-      return (pa ? pa.priority : 0) - (pb ? pb.priority : 0);
-    });
+    const priorityMap = new Map(stopProfiles.map((item) => [item.stopId, item.priority]));
+    return stops.sort((a, b) => (priorityMap.get(a.stopId) ?? 0) - (priorityMap.get(b.stopId) ?? 0));
   },
 
-  matchesBusRouteFilter(route, routeFilter) {
-    const filter = normalizeList(routeFilter);
-    if (!filter.length) {
-      return true;
-    }
-
-    return filter.map((entry) => entry.toUpperCase()).includes(String(route || "").toUpperCase());
-  },
-
-  isMetroBusOnlyMode() {
-    return parseBoolean(this.config.metroBusOnlyMode, false);
-  },
-
-  isMetroBusEnabled() {
-    return parseBoolean(this.config.showMetroBus, false) || this.isMetroBusOnlyMode();
-  },
-
-  normalizeBusMinutes(value) {
-    if (value == null) {
-      return 999;
-    }
-
-    const text = String(value).trim().toUpperCase();
-    if (text === "ARR" || text === "BRD") {
-      return 0;
-    }
-
-    const parsed = Number(text);
-    return Number.isFinite(parsed) ? parsed : 999;
-  },
-
-  formatBusMinutes(value) {
+  formatDisplayMinutes(value) {
     if (value == null) {
       return "--";
     }
@@ -697,10 +568,34 @@ module.exports = NodeHelper.create({
     return Number.isFinite(parsed) ? `${parsed} min` : text;
   },
 
+  normalizeMinutesSort(value) {
+    if (value == null) {
+      return 999;
+    }
+
+    const text = String(value).trim().toUpperCase();
+    if (text === "ARR" || text === "BRD") {
+      return 0;
+    }
+
+    const parsed = Number(text);
+    return Number.isFinite(parsed) ? parsed : 999;
+  },
+
+  isMetroBusOnlyMode() {
+    return parseBoolean(this.config.metroBusOnlyMode, false);
+  },
+
+  isMetroBusEnabled() {
+    return parseBoolean(this.config.showMetroBus, false) || this.isMetroBusOnlyMode();
+  },
+
   resolveStationProfiles() {
-    const configuredStations = Array.isArray(this.config.stationCodes) && this.config.stationCodes.length
-      ? this.config.stationCodes
-      : ["A01"];
+    const rawConfigured = this.config.stationCodes;
+    const configured = Array.isArray(rawConfigured)
+      ? rawConfigured
+      : (rawConfigured != null ? [rawConfigured] : []);
+    const configuredStations = configured.length ? configured : ["A01"];
 
     return configuredStations
       .map((entry, index) => this.normalizeStationProfile(entry, index))
@@ -709,14 +604,15 @@ module.exports = NodeHelper.create({
 
   normalizeStationProfile(entry, index) {
     const isObject = entry && typeof entry === "object" && !Array.isArray(entry);
-    const code = isObject ? entry.code || entry.stationCode || entry.id : entry;
+    const rawCode = isObject ? entry.code || entry.stationCode || entry.id : entry;
+    const code = String(rawCode || "").trim();
 
     if (!code) {
       return null;
     }
 
     return {
-      code: String(code).trim(),
+      code,
       name: isObject ? entry.name || entry.label || null : null,
       lineFilter: isObject && entry.lineFilter ? normalizeList(entry.lineFilter) : normalizeList(this.config.lineFilter),
       destinationIncludes: isObject && entry.destinationIncludes ? normalizeList(entry.destinationIncludes) : normalizeList(this.config.destinationIncludes),
@@ -725,8 +621,6 @@ module.exports = NodeHelper.create({
       groupByLine: isObject && entry.groupByLine != null ? Boolean(entry.groupByLine) : Boolean(this.config.groupByLine),
       showIncidents: isObject && entry.showIncidents != null ? Boolean(entry.showIncidents) : Boolean(this.config.showIncidents),
       alerts: isObject && entry.alerts ? normalizeList(entry.alerts) : normalizeList(this.config.alertRules),
-      showFirstLastTrains: isObject && entry.showFirstLastTrains != null ? Boolean(entry.showFirstLastTrains) : Boolean(this.config.showFirstLastTrains),
-      firstLastTrainMode: isObject && entry.firstLastTrainMode ? String(entry.firstLastTrainMode).toLowerCase() : String(this.config.firstLastTrainMode || "filtered").toLowerCase(),
       priority: parseNumber(isObject && entry.priority != null ? entry.priority : index, index)
     };
   },
@@ -734,10 +628,7 @@ module.exports = NodeHelper.create({
   groupPredictionsByStation(predictions) {
     const grouped = {};
 
-    predictions
-      .filter((item) => this.matchesLineFilter(item.Line, this.config.lineFilter))
-      .filter((item) => this.matchesDestinationFilter(item.DestinationName, this.config.destinationIncludes))
-      .forEach((item) => {
+    this.filterPredictionsByLineAndDest(predictions, this.config.lineFilter, this.config.destinationIncludes).forEach((item) => {
         const stationCode = item.LocationCode;
         if (!stationCode) {
           return;
@@ -748,40 +639,26 @@ module.exports = NodeHelper.create({
         }
 
         grouped[stationCode].push({
-          line: item.Line || "NA",
+          line: item.Line || NA_LINE,
           destination: item.DestinationName || "Unknown",
           direction: this.directionFromNumber(item.Group),
-          minutesRaw: item.Min,
-          displayMinutes: this.formatMinutes(item.Min),
-          minutesSort: this.normalizeMinutes(item.Min),
+          displayMinutes: this.formatDisplayMinutes(item.Min),
+          minutesSort: this.normalizeMinutesSort(item.Min),
           cars: item.Car
         });
       });
-
-    Object.keys(grouped).forEach((stationCode) => {
-      grouped[stationCode].sort((a, b) => {
-        if (a.minutesSort !== b.minutesSort) {
-          return a.minutesSort - b.minutesSort;
-        }
-
-        return a.destination.localeCompare(b.destination);
-      });
-    });
 
     return grouped;
   },
 
   buildStationPayload(grouped, incidents, weather) {
-    const now = Date.now();
-    const profiles = this.stationProfiles.slice(0).sort((a, b) => a.priority - b.priority);
+    const profiles = sortCopy(this.stationProfiles, (a, b) => a.priority - b.priority);
 
     return profiles.map((profile) => {
       const rawPredictions = grouped[profile.code] || [];
-      const predictions = this.filterAndDecoratePredictions(rawPredictions, profile, incidents, now);
-      const groupedByLine = this.groupPredictionsByLine(predictions);
+      const predictions = this.filterAndDecoratePredictions(rawPredictions, profile, incidents);
       const alerts = this.collectAlerts(predictions, incidents, profile);
-      const condition = this.buildConditionSummary(predictions, incidents, weather, now);
-      const firstLastTrains = this.deriveFirstLastTrains(profile.code, profile);
+      const condition = this.buildConditionSummary(predictions, incidents, weather);
 
       return {
         code: profile.code,
@@ -789,31 +666,28 @@ module.exports = NodeHelper.create({
         displayName: profile.name || this.stationMap[profile.code] || profile.code,
         profile,
         predictions,
-        groupedPredictions: groupedByLine,
-        nextSummary: predictions.slice(0, parseNumber(this.config.summaryCount, 3)),
+        nextSummary: limitArray(predictions, this.getConfigNumber("summaryCount", 3)),
         alerts,
         conditionText: condition.text,
-        conditionClass: condition.className,
-        firstLastTrains
+        conditionClass: condition.className
       };
     });
   },
 
-  filterAndDecoratePredictions(predictions, profile, incidents, now) {
+  filterAndDecoratePredictions(predictions, profile, incidents) {
     const incidentLines = this.collectIncidentLines(incidents);
 
     return predictions
-      .filter((item) => this.matchesLineFilter(item.line, profile.lineFilter))
-      .filter((item) => this.matchesDestinationFilter(item.destination, profile.destinationIncludes))
-      .map((item) => this.decoratePrediction(item, incidentLines, now));
+      .filter((item) => this.matchesLineFilter(item.line, profile.lineFilter) && this.matchesDestinationFilter(item.destination, profile.destinationIncludes))
+      .map((item) => this.decoratePrediction(item, incidentLines));
   },
 
-  decoratePrediction(prediction, incidentLines, now) {
+  decoratePrediction(prediction, incidentLines) {
     const status = this.classifyPrediction(prediction, incidentLines);
     const carsClass = this.classifyCars(prediction.cars);
 
     return {
-      line: prediction.line || "NA",
+      line: prediction.line || NA_LINE,
       destination: prediction.destination || "Unknown",
       direction: prediction.direction || "-",
       displayMinutes: prediction.displayMinutes,
@@ -823,19 +697,15 @@ module.exports = NodeHelper.create({
       carsClass,
       statusClass: status.className,
       statusLabel: status.label,
-      alerts: prediction.alerts || [],
-      fetchedAt: now
+      alerts: []
     };
   },
 
   classifyPrediction(prediction, incidentLines) {
-    const line = String(prediction.line || "").toUpperCase();
+    const line = normalizeLineCode(prediction.line, "");
     const matchedIncident = incidentLines[line] || null;
 
-    const thresholds = this.config.statusThresholds || {};
-    const watchMinutes = parseNumber(thresholds.watchMinutes, 8);
-    const delayedMinutes = parseNumber(thresholds.delayedMinutes, 15);
-    const criticalMinutes = parseNumber(thresholds.criticalMinutes, 25);
+    const thresholds = this.getStatusThresholds();
 
     if (matchedIncident && matchedIncident.rank >= 3) {
       return { className: "alert", label: "Alert" };
@@ -849,15 +719,15 @@ module.exports = NodeHelper.create({
       return { className: "arriving", label: "Arriving" };
     }
 
-    if (prediction.minutesSort >= criticalMinutes) {
+    if (prediction.minutesSort >= thresholds.critical) {
       return { className: "critical", label: "Critical wait" };
     }
 
-    if (prediction.minutesSort >= delayedMinutes) {
+    if (prediction.minutesSort >= thresholds.delayed) {
       return { className: "delayed", label: "Delayed" };
     }
 
-    if (prediction.minutesSort >= watchMinutes) {
+    if (prediction.minutesSort >= thresholds.watch) {
       return { className: "watch", label: "Watch" };
     }
 
@@ -865,9 +735,13 @@ module.exports = NodeHelper.create({
   },
 
   classifyCars(cars) {
-    const numeric = Number(String(cars || "").replace(/[^0-9]/g, ""));
+    if (!cars) {
+      return "dcmetro__cars--unknown";
+    }
 
-    if (!Number.isFinite(numeric)) {
+    const numeric = Number(String(cars).replace(/[^0-9]/g, ""));
+
+    if (!numeric) {
       return "dcmetro__cars--unknown";
     }
 
@@ -917,41 +791,45 @@ module.exports = NodeHelper.create({
       }
     });
 
-    predictions.forEach((prediction) => {
-      prediction.alerts = alerts;
-    });
+    if (alerts.length) {
+      predictions.forEach((prediction) => {
+        prediction.alerts = alerts;
+      });
+    }
 
     return alerts;
   },
 
-  buildConditionSummary(predictions, incidents, weather, now) {
-    const freshness = this.getFreshnessState(this.lastBroadcastAt || now);
-    const activeIncidents = incidents.filter((incident) => this.matchesSeverityFilter(incident.severity));
-    const delayedTrains = predictions.filter((prediction) => prediction.statusClass === "delayed" || prediction.statusClass === "alert");
+  buildConditionSummary(predictions, incidents, weather) {
+    const freshness = this.getFreshnessState(this.lastBroadcastAt || Date.now());
+    const safePredictions = ensureArray(predictions);
+    const safeIncidents = ensureArray(incidents);
+    const activeIncidents = safeIncidents.filter((incident) => this.matchesSeverityFilter(incident.severity));
+    const delayedTrains = safePredictions.filter((prediction) => this.predictionsAreDamaged(prediction));
 
     if (weather && this.config.showWeather) {
       return {
-        text: `${activeIncidents.length ? `${activeIncidents.length} alert${activeIncidents.length === 1 ? "" : "s"}` : "Service normal"} • ${this.formatWeather(weather)}`,
+        text: `${activeIncidents.length ? pluralize(activeIncidents.length, "alert") : "Service normal"} • ${this.formatWeather(weather)}`,
         className: weather.isDay === 0 ? "dcmetro__condition--night" : "dcmetro__condition--weather"
       };
     }
 
     if (activeIncidents.length) {
       return {
-        text: `${activeIncidents.length} service alert${activeIncidents.length === 1 ? "" : "s"}${delayedTrains.length ? ` • ${delayedTrains.length} delayed train${delayedTrains.length === 1 ? "" : "s"}` : ""}`,
+        text: `${pluralize(activeIncidents.length, "service alert")}${delayedTrains.length ? ` • ${pluralize(delayedTrains.length, "delayed train")}` : ""}`,
         className: "dcmetro__condition--alert"
       };
     }
 
     if (delayedTrains.length) {
       return {
-        text: `${delayedTrains.length} train${delayedTrains.length === 1 ? "" : "s"} delayed`,
+        text: `${pluralize(delayedTrains.length, "train")} delayed`,
         className: "dcmetro__condition--delayed"
       };
     }
 
     return {
-      text: freshness.isStale ? `Data stale ${this.relativeTime(now)}` : "Service normal",
+      text: freshness.isStale ? "Data stale" : "Service normal",
       className: freshness.isStale ? "dcmetro__condition--stale" : "dcmetro__condition--normal"
     };
   },
@@ -959,9 +837,9 @@ module.exports = NodeHelper.create({
   collectIncidentLines(incidents) {
     const map = {};
 
-    incidents.forEach((incident) => {
-      incident.lineCodes.forEach((line) => {
-        const key = String(line || "").toUpperCase();
+    ensureArray(incidents).forEach((incident) => {
+      ensureArray(incident.lineCodes).forEach((line) => {
+        const key = normalizeLineCode(line, "");
         const existing = map[key];
         if (!existing || incident.rank > existing.rank) {
           map[key] = incident;
@@ -973,65 +851,37 @@ module.exports = NodeHelper.create({
   },
 
   groupPredictionsByLine(predictions) {
-    const grouped = {};
-
-    predictions.forEach((prediction) => {
-      const line = String(prediction.line || "NA").toUpperCase();
-      if (!grouped[line]) {
-        grouped[line] = [];
-      }
-
-      grouped[line].push(prediction);
-    });
-
-    return Object.keys(grouped)
-      .sort((a, b) => this.getLineWeight(a) - this.getLineWeight(b))
-      .map((line) => ({
-        line,
-        predictions: grouped[line].slice(0).sort((a, b) => {
-          if (a.minutesSort !== b.minutesSort) {
-            return a.minutesSort - b.minutesSort;
-          }
-
-          return a.destination.localeCompare(b.destination);
-        })
-      }));
+    return createPredictionGroups(predictions, this.config.lineOrder, this.getLineWeight.bind(this));
   },
 
-  getLineWeight(lineCode) {
-    const customOrder = normalizeList(this.config.lineOrder).map((entry) => entry.toUpperCase());
-    const normalizedLine = String(lineCode || "NA").toUpperCase();
-    const index = customOrder.indexOf(normalizedLine);
-    if (index >= 0) {
-      return index + 1;
-    }
-
-    return lineWeight(normalizedLine);
+  getLineWeight(lineCode, customOrder) {
+    const order = customOrder || this.normalizedLineOrderCache;
+    return calculateLineWeight(lineCode, order);
   },
 
   matchesLineFilter(line, lineFilter) {
     const filter = normalizeList(lineFilter);
-    if (!filter.length) {
+    if (isEmpty(filter)) {
       return true;
     }
 
-    return filter.map((entry) => entry.toUpperCase()).includes(String(line || "").toUpperCase());
+    const upperLine = normalizeLineCode(line, "");
+    return filter.some((entry) => entry.toUpperCase() === upperLine);
   },
 
   matchesDestinationFilter(destination, destinationIncludes) {
     const includes = normalizeList(destinationIncludes);
-    if (!includes.length) {
+    if (isEmpty(includes)) {
       return true;
     }
 
-    const needle = String(destination || "").toLowerCase();
+    const needle = normalizeLowercase(destination, "");
     return includes.some((entry) => needle.includes(entry.toLowerCase()));
   },
 
   matchesSeverityFilter(severity) {
-    const filter = String(this.config.incidentSeverityFilter || "all").toLowerCase();
-    const rank = { all: 0, advisory: 1, major: 2, critical: 3 };
-    return (rank[String(severity || "advisory").toLowerCase()] || 1) >= (rank[filter] || 0);
+    const filter = this.getConfigString("incidentSeverityFilter", "all");
+    return (SEVERITY_RANK[String(severity || "advisory").toLowerCase()] || 1) >= (SEVERITY_RANK[filter] || 0);
   },
 
   formatIncidentDateRange(item) {
@@ -1043,9 +893,9 @@ module.exports = NodeHelper.create({
     }
 
     if (start && end) {
-      return this.formatIncidentDateOnly(start) === this.formatIncidentDateOnly(end)
-        ? this.formatIncidentDateOnly(start)
-        : `${this.formatIncidentDateOnly(start)} - ${this.formatIncidentDateOnly(end)}`;
+      const startStr = this.formatIncidentDateOnly(start);
+      const endStr = this.formatIncidentDateOnly(end);
+      return startStr === endStr ? startStr : `${startStr} - ${endStr}`;
     }
 
     return this.formatIncidentDateOnly(start || end);
@@ -1059,7 +909,9 @@ module.exports = NodeHelper.create({
       }
 
       const parsed = new Date(rawValue);
-      if (!Number.isNaN(parsed.getTime())) {
+      const timeMs = parsed.getTime();
+      // Valid date must be finite, not NaN, and not epoch (1970-01-01)
+      if (Number.isFinite(timeMs) && timeMs > 0) {
         return parsed;
       }
     }
@@ -1072,13 +924,12 @@ module.exports = NodeHelper.create({
       return "";
     }
 
-    const month = new Intl.DateTimeFormat("en-US", { month: "short" }).format(date);
-    const day = new Intl.DateTimeFormat("en-US", { day: "numeric" }).format(date);
-    const year = date.getFullYear();
-    const currentYear = new Date().getFullYear();
-    const yearSuffix = year !== currentYear ? `, ${year}` : "";
+    const options = { month: "short", day: "numeric" };
+    if (date.getFullYear() !== new Date().getFullYear()) {
+      options.year = "numeric";
+    }
 
-    return `${month} ${day}${yearSuffix}`;
+    return date.toLocaleDateString("en-US", options);
   },
 
   normalizeLines(linesAffected) {
@@ -1086,6 +937,30 @@ module.exports = NodeHelper.create({
       .split(";")
       .map((line) => line.trim())
       .filter(Boolean);
+  },
+
+  predictionsAreDamaged(prediction) {
+    return prediction.statusClass === "delayed"
+      || prediction.statusClass === "critical"
+      || prediction.statusClass === "alert";
+  },
+
+  filterPredictionsByLineAndDest(predictions, lineFilter, destIncludes) {
+    return predictions.filter(
+      (item) => this.matchesLineFilter(item.Line, lineFilter) && this.matchesDestinationFilter(item.DestinationName, destIncludes)
+    );
+  },
+
+  getStatusThresholds() {
+    const thresholds = this.config.statusThresholds || {};
+    const watch = Math.max(0, parseNumber(thresholds.watchMinutes, 8));
+    const delayed = Math.max(watch, parseNumber(thresholds.delayedMinutes, 15));
+    const critical = Math.max(delayed, parseNumber(thresholds.criticalMinutes, 25));
+    return {
+      watch,
+      delayed,
+      critical
+    };
   },
 
   directionFromNumber(group) {
@@ -1100,35 +975,15 @@ module.exports = NodeHelper.create({
     return "-";
   },
 
-  normalizeMinutes(value) {
-    if (value === "BRD" || value === "ARR") {
-      return 0;
-    }
-
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : 999;
-  },
-
-  formatMinutes(value) {
-    if (value === "BRD") {
-      return "Boarding";
-    }
-
-    if (value === "ARR") {
-      return "Arriving";
-    }
-
-    return `${value} min`;
-  },
-
   classifyIncident(description) {
-    const text = String(description || "").toLowerCase();
+    const text = normalizeLowercase(description, "");
 
-    if (/suspend|suspended|no service|shutdown|evacuat|fire|police|disabled|track work|bus bridge|major delay/.test(text)) {
+    // Critical: Use word boundaries (\b) to prevent partial matches (e.g., "suspend" in "unsuspend")
+    if (/\b(suspend|suspended|no\s+service|shutdown|evacuat|fire|police|disabled|track\s+work|bus\s+bridge|major\s+delay)\b/.test(text)) {
       return { rank: 3, severity: "critical", severityLabel: "Critical" };
     }
 
-    if (/delay|delayed|single track|slow|minor|construction|maintenance/.test(text)) {
+    if (/\b(delay|delayed|single\s+track|slow|minor|construction|maintenance)\b/.test(text)) {
       return { rank: 2, severity: "major", severityLabel: "Major" };
     }
 
@@ -1136,50 +991,32 @@ module.exports = NodeHelper.create({
   },
 
   formatWeather(weather) {
-    const temperature = Math.round(Number(weather.temperature));
-    const summary = this.weatherSummary(weather.weathercode);
-    return `${Number.isFinite(temperature) ? `${temperature}°F` : "Weather"} ${summary}`.trim();
+    return formatWeatherDisplay(weather);
   },
 
-  weatherSummary(code) {
-    const numeric = Number(code);
+  getConfigBool(key, fallback) {
+    return parseBoolean(this.config[key], fallback);
+  },
 
-    if (numeric === 0) {
-      return "Clear";
-    }
-    if (numeric === 1) {
-      return "Mostly clear";
-    }
-    if (numeric === 2) {
-      return "Partly cloudy";
-    }
-    if (numeric === 3) {
-      return "Cloudy";
-    }
-    if (numeric === 45 || numeric === 48) {
-      return "Fog";
-    }
-    if (numeric >= 51 && numeric <= 67) {
-      return "Rain";
-    }
-    if (numeric >= 71 && numeric <= 77) {
-      return "Snow";
-    }
-    if (numeric >= 80 && numeric <= 82) {
-      return "Showers";
-    }
-    if (numeric >= 95) {
-      return "Thunderstorms";
-    }
+  getConfigValue(key, fallback) {
+    return this.config[key] != null ? this.config[key] : fallback;
+  },
 
-    return "Weather";
+  getConfigString(key, fallback) {
+    return String(this.config[key] || fallback || "").toLowerCase();
+  },
+
+  getConfigNumber(key, fallback) {
+    return parseNumber(this.config[key], fallback);
+  },
+
+  isCriticalSeverity(severity) {
+    return normalizeLowercase(severity, "") === "critical";
   },
 
   getFreshnessState(timestamp) {
-    const ageSeconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
     return {
-      ageSeconds,
-      isStale: ageSeconds > this.config.staleAfterSeconds
+      isStale: (Date.now() - timestamp) > this.config.staleAfterSeconds * 1000
     };
   },
 
@@ -1191,13 +1028,23 @@ module.exports = NodeHelper.create({
     return new Promise((resolve, reject) => {
       const request = https.get(url, { headers }, (response) => {
         let body = "";
+        let limitExceeded = false;
         response.on("data", (chunk) => {
           body += chunk;
+          if (body.length > 1048576) {
+            limitExceeded = true;
+            request.destroy(new Error("Response body exceeded 1 MB limit"));
+          }
         });
 
         response.on("end", () => {
+          if (limitExceeded) {
+            return;
+          }
+
           if (response.statusCode < 200 || response.statusCode >= 300) {
-            reject(new Error(`HTTP ${response.statusCode}: ${body.slice(0, 200)}`));
+            const errorPreview = body.slice(0, 500).replace(/\n\s*/g, " ");
+            reject(new Error(`HTTP ${response.statusCode}: ${errorPreview}`));
             return;
           }
 

@@ -11,7 +11,7 @@ A full-featured [MagicMirror²](https://github.com/MagicMirrorOrg/MagicMirror) m
 - Next-train summary strip for a fast commute glance
 - Line filtering (show only selected rail lines)
 - Destination filtering (keyword includes)
-- Optional display controls for direction, cars, track, and status badges
+- Optional display controls for direction, cars, and status badges
 - Color-coded car counts that highlight longer and shorter consists
 - Service alert severity filtering and custom keyword alerts
 - Optional incident ticker scrolling and row caps
@@ -25,7 +25,7 @@ A full-featured [MagicMirror²](https://github.com/MagicMirrorOrg/MagicMirror) m
 - Optional weather row when coordinates are provided
 - Automatic retries when the API fails
 
-Release line `1.0.6` is a cleanup release.
+Current npm/package version is `1.0.8`. Ongoing hardening and documentation refinements are tracked under `Unreleased` in [CHANGELOG.md](CHANGELOG.md).
 
 ## Requirements
 
@@ -116,6 +116,7 @@ Add this to your `config/config.js` file:
     maxIncidentRows: 2,
     incidentScroll: false,
     incidentScrollSpeed: 28,
+    incidentScrollSpeedMin: 8,
     etaColorMode: "gradient",
     carsColorMode: "wmata",
     statusThresholds: {
@@ -198,12 +199,12 @@ All other settings are optional and fall back to the defaults shown below.
 | Option | Type | Required? | Default | What it does |
 | --- | --- | --- | --- | --- |
 | `apiKey` | String | Yes | `""` | WMATA API key used for all API requests. Module will show an error until this is set. |
-| `stationCodes` | Array<String or Object> | No | `["A01"]` | Station codes to query. Each entry can be a string code or an object with per-station overrides such as `name`, `lineFilter`, `destinationIncludes`, `maxRows`, `compact`, `groupByLine`, `showIncidents`, and `alerts`. |
-| `refreshInterval` | Number | No | `30000` | How often train predictions refresh, in milliseconds. |
-| `incidentsRefreshInterval` | Number | No | `120000` | How often service incidents refresh, in milliseconds. |
-| `retryDelay` | Number | No | `15000` | Wait time before retrying after a failed predictions request. |
+| `stationCodes` | Array<String or Object> or String | No | `["A01"]` | Station codes to query. You can provide an array (recommended) or a single string code. Values are trimmed and must not be empty. Each array entry can be a string code or an object with per-station overrides such as `name`, `lineFilter`, `destinationIncludes`, `maxRows`, `compact`, `groupByLine`, `showIncidents`, and `alerts`. |
+| `refreshInterval` | Number | No | `30000` | How often train predictions refresh, in milliseconds. Must be >= `5000`. |
+| `incidentsRefreshInterval` | Number | No | `120000` | How often service incidents refresh, in milliseconds. Must be >= `5000`. |
+| `retryDelay` | Number | No | `15000` | Wait time before retrying after a failed predictions request. Must be >= `1000`. |
 | `stationRotationInterval` | Number | No | `20000` | Time each station remains visible before rotating to the next station. |
-| `maxRows` | Number | No | `8` | Maximum number of train rows rendered per station card. |
+| `maxRows` | Number | No | `8` | Maximum number of train rows rendered per station card. Must be >= `1`. |
 | `summaryCount` | Number | No | `3` | Number of upcoming trains shown in the summary strip. |
 | `lineFilter` | Array<String> | No | `[]` | Optional line filter. Empty means all lines. Example values: `RD`, `OR`, `SV`, `BL`, `YL`, `GR`. |
 | `lineOrder` | Array<String> | No | `["RD", "OR", "SV", "BL", "YL", "GR", "NA"]` | Custom line display order used for grouped sections. |
@@ -214,6 +215,7 @@ All other settings are optional and fall back to the defaults shown below.
 | `maxIncidentRows` | Number | No | `3` | Maximum number of incident rows shown in the incident panel. |
 | `incidentScroll` | Boolean | No | `false` | Enables a horizontal ticker-style incident scroll mode. |
 | `incidentScrollSpeed` | Number | No | `28` | Incident ticker cycle duration in seconds (higher is slower). |
+| `incidentScrollSpeedMin` | Number | No | `8` | Minimum ticker cycle duration floor in seconds used to prevent overly fast scrolling. |
 | `etaColorMode` | String | No | `status` | ETA coloring mode: `off`, `status`, or `gradient`. |
 | `carsColorMode` | String | No | `wmata` | Car badge coloring mode: `wmata`, `capacity`, or `off`. WMATA uses plain line colors; `capacity` keeps the older filled highlight-style look. |
 | `statusThresholds` | Object | No | `{ watchMinutes: 8, delayedMinutes: 15, criticalMinutes: 25 }` | Minute thresholds for status classification and ETA highlighting. |
@@ -256,8 +258,6 @@ All other settings are optional and fall back to the defaults shown below.
 | `commuteMaxRows` | Number | No | `5` | Maximum rows shown during commute/compact windows. |
 | `compact` | Boolean | No | `false` | Forces the compact layout at all times. |
 | `animationSpeed` | Number | No | `1000` | DOM update animation speed in milliseconds. |
-| `showFirstLastTrains` | Boolean | No | `false` | Shows or hides the first and last train of the day summaries for each station. |
-| `firstLastTrainMode` | String | No | `"filtered"` | For multi-platform stations, controls whether to show first/last data for `"filtered"` lines only or `"all"` lines. Only applies when `showFirstLastTrains` is enabled. |
 
 ## Notes
 
@@ -266,6 +266,7 @@ All other settings are optional and fall back to the defaults shown below.
 - Car badges are color-coded to give a quick sense of train length at a glance.
 - If you want station-specific behavior, use object entries inside `stationCodes` instead of only string codes.
 - For best results, keep `refreshInterval` at 20-60 seconds to avoid excessive API usage.
+- Invalid config values are rejected at startup with a visible module error and detailed server-side log message.
 
 ## Advanced Configuration Guide
 
@@ -369,6 +370,7 @@ These options control service alerts and how much room they take:
 - `maxIncidentRows`: limits how many incident messages are shown.
 - `incidentScroll`: switches long incident text into a ticker-style scroll.
 - `incidentScrollSpeed`: controls how fast that ticker cycles.
+- `incidentScrollSpeedMin`: enforces the minimum ticker cycle duration floor.
 
 Suggested setup:
 - Use `incidentSeverityFilter: "major"` or `"critical"` if you only want more serious disruptions.

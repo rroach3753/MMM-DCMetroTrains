@@ -6,10 +6,37 @@ The format is based on Keep a Changelog.
 
 ## [Unreleased]
 
-### Added
-- Added this changelog to track releases and notable module updates.
+## [1.0.8] - 2026-05-08
+
+### Fixed
+- Enforced startup config validation before initialization and surfaced clear runtime error messaging for invalid configuration.
+- Hardened incident/condition processing with additional null-safe guards (`incidents`, `predictions`, and `lineCodes`).
+- Corrected incident filtering logic in the browser module to avoid reassignment of immutable locals.
+- Removed duplicate/dead helper definitions and streamlined retry timer helper ownership.
+- Added explicit `node_helper` stop lifecycle cleanup for timers/retry handles to align with MagicMirror module lifecycle expectations.
+- Enforced and documented minimum bounds for `incidentsRefreshInterval` and `retryDelay` to prevent runaway scheduling.
+
+### Changed
+- **Optimization Release (Passes 1-18)**: Comprehensive multi-pass code optimization and consolidation:
+  - **Pass 1-4**: Safety fixes and dead code removal, removed unused error handlers and payload cleanup.
+  - **Pass 5-7**: Advanced caching patterns, filter efficiency improvements, and array operation optimizations.
+  - **Pass 8-9**: Introduced helper function infrastructure with 30+ reusable utility functions.
+  - **Pass 10**: Removed first and last train of the day display feature (`showFirstLastTrains`, `firstLastTrainMode` config options) and related WMATA station service time caching.
+  - **Pass 11-12**: High-impact pattern consolidation across prediction filtering, status classification, and incident grouping.
+  - **Pass 13**: Free function extraction and comprehensive deduplication of utility methods.
+  - **Pass 14**: Unified all configuration access methods via centralized `getConfigString`, `getConfigNumber`, `getConfigBool`, and `getConfigValue` helpers.
+  - **Pass 15**: Applied isEmpty/isNotEmpty helpers to array checks, consolidated NA_LINE constant usage, cached freshness state via `extractFreshness` method, and added element creation helpers (makeDiv, makeSpan, makeEl).
+  - **Pass 16**: Introduced CSS class building helpers (getStaleClass, getStatusClassName, getClassForSeverity, getRowAlertClass) to eliminate repeated template literal patterns; standardized all array safeguards with ensureArray; consolidated data fetch filtering with filterPredictionsByLineAndDest helper.
+  - **Pass 17**: Extracted table cell rendering helpers (buildEtaCell, buildCarsCell, buildStatusCell, buildDirectionCell, buildDestinationCell, buildTableCell); consolidated forecast chip rendering with buildForecastChip; refactored incident rendering for consistency with helper naming; extracted status threshold helper (getStatusThresholds) in node_helper to eliminate threshold extraction duplication.
+  - **Pass 18**: Introduced array limiting helper (limitArray) for consistent slice(0, Math.max(1, limit)) patterns; added scroll duration helper (getScrollDuration) for CSS duration formatting; refactored buildAlertBanner, buildForecastSummary, buildArrivals, and buildIncidents to use new helpers; consolidated MetroBus stop prediction limiting in node_helper.
+- **Code Quality**: Comprehensive refactoring focused on DRY principles, maintainability, and consistency across codebase. 44+ helper functions enable easy pattern updates, reduce cognitive load for maintenance, and facilitate testing of individual concerns.
+- **Performance**: Improved caching patterns, unified API call scheduling with jitter, and optimized array/object iteration patterns throughout the codebase.
+- **Architecture**: Enhanced helper infrastructure with comprehensive abstraction covering array operations, CSS class building, config access, data filtering, element creation patterns, table cell rendering, forecast display, status classification, and scroll duration formatting.
+- README now matches runtime behavior for validation constraints and includes `incidentScrollSpeedMin` in examples/options.
 
 ## [1.1.0] - 2026-04-28
+
+Note: This release cycle included a short-lived first/last-train feature experiment that was added and then removed within the same version progression.
 
 ### Added
 - Optional first and last train of the day display via `showFirstLastTrains` configuration option (defaults to off).
@@ -17,6 +44,11 @@ The format is based on Keep a Changelog.
 - Daily caching of WMATA station service time data per WMATA API recommendations to reduce request load.
 - Separate styled summary block showing northbound and southbound first and last train times, rendered above the main arrivals table.
 - Per-station configuration overrides for `showFirstLastTrains` and `firstLastTrainMode` to customize behavior per station.
+
+### Removed
+- Removed first and last train of the day display feature and associated WMATA station service time caching.
+- Removed `showFirstLastTrains` and `firstLastTrainMode` configuration options.
+- Removed related UI components for first/last train summary display.
 
 ## [1.0.7] - 2026-04-28
 

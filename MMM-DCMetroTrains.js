@@ -1,13 +1,13 @@
 /* global Module */
 
 const LINE_ORDER = {
-  rd: 1,
-  or: 2,
-  sv: 3,
-  bl: 4,
-  yl: 5,
-  gr: 6,
-  na: 99
+  RD: 1,
+  OR: 2,
+  SV: 3,
+  BL: 4,
+  YL: 5,
+  GR: 6,
+  NA: 99
 };
 
 function normalizeList(value) {
@@ -55,7 +55,7 @@ function clamp(value, minimum, maximum) {
 }
 
 function timeToMinutes(value) {
-  const match = /^([0-2]\d):([0-5]\d)$/.exec(String(value || "").trim());
+  const match = /^([0-1]\d|2[0-3]):([0-5]\d)$/.exec(String(value || "").trim());
   if (!match) {
     return null;
   }
@@ -63,9 +63,75 @@ function timeToMinutes(value) {
   return Number(match[1]) * 60 + Number(match[2]);
 }
 
-function lineSortWeight(lineCode) {
-  return LINE_ORDER[String(lineCode || "na").toLowerCase()] || 90;
+function classNames(...classes) {
+  return classes.filter(Boolean).join(" ");
 }
+
+function ensureArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+const SEVERITY_RANK = {
+  all: 0,
+  advisory: 1,
+  major: 2,
+  critical: 3
+};
+
+function sortCopy(array, compareFn) {
+  return array.slice(0).sort(compareFn);
+}
+
+function normalizeLineCode(code, fallback) {
+  return String(code || fallback || "NA").toUpperCase();
+}
+
+function calculateLineWeight(lineCode, customOrder) {
+  const normalizedLine = normalizeLineCode(lineCode);
+  const index = customOrder.indexOf(normalizedLine);
+  if (index >= 0) {
+    return index + 1;
+  }
+
+  return LINE_ORDER[String(lineCode || "NA").toUpperCase()] || 90;
+}
+
+function createPredictionGroups(predictions, lineOrder, getLineWeightFn) {
+  const grouped = {};
+  const customOrder = normalizeList(lineOrder).map((entry) => entry.toUpperCase());
+
+  predictions.forEach((prediction) => {
+    const line = normalizeLineCode(prediction.line);
+    if (!grouped[line]) {
+      grouped[line] = [];
+    }
+
+    grouped[line].push(prediction);
+  });
+
+  return Object.keys(grouped)
+    .sort((a, b) => getLineWeightFn(a, customOrder) - getLineWeightFn(b, customOrder))
+    .map((line) => ({
+      line,
+      predictions: sortCopy(grouped[line], (a, b) => {
+        if (a.minutesSort !== b.minutesSort) {
+          return a.minutesSort - b.minutesSort;
+        }
+
+        return a.destination.localeCompare(b.destination);
+      })
+    }));
+}
+
+function isEmpty(array) {
+  return !array || !array.length;
+}
+
+function isNotEmpty(array) {
+  return array && array.length > 0;
+}
+
+const NA_LINE = "NA";
 
 function weatherSummary(code) {
   const numeric = Number(code);
@@ -101,6 +167,82 @@ function weatherSummary(code) {
   return "Weather";
 }
 
+function formatWeatherDisplay(weather) {
+  const temperature = Math.round(Number(weather.temperature));
+  const summary = weatherSummary(weather.weathercode);
+  return `${Number.isFinite(temperature) ? `${temperature}°F` : "Weather"} ${summary}`.trim();
+}
+
+function makeDiv(className, text) {
+  return makeEl("div", className, text);
+}
+
+function makeSpan(className, text) {
+  return makeEl("span", className, text);
+}
+
+function normalizeLineOrderToUpperCase(lineOrder) {
+  return normalizeList(lineOrder).map((entry) => entry.toUpperCase());
+}
+
+function normalizeLowercase(value, fallback) {
+  return String(value || fallback || "").toLowerCase();
+}
+
+function makeEl(tag, className, text) {
+  const el = document.createElement(tag);
+  if (className) {
+    el.className = className;
+  }
+  if (text != null) {
+    el.textContent = text;
+  }
+  return el;
+}
+function getStaleClass(isStale) {
+  return isStale ? "dcmetro__updated--stale" : "";
+}
+
+function getStatusClassName(statusClass) {
+  return `dcmetro__status--${statusClass}`;
+}
+
+function getClassForSeverity(severity) {
+  return `dcmetro__incident--${severity}`;
+}
+
+function getRowAlertClass(alerts) {
+  return isNotEmpty(alerts) ? "dcmetro__row--alert" : "";
+}
+
+function buildTableCell(className, content) {
+  return makeEl("td", className, content);
+}
+
+function buildForecastChip(prediction) {
+  return makeEl("span", classNames("dcmetro__forecastChip", `dcmetro__forecastChip--${prediction.statusClass}`), `${prediction.line} ${prediction.destination} ${prediction.displayMinutes}`);
+}
+
+function buildIncidentItem(incident, includeDescription) {
+  const item = makeEl("div", classNames("dcmetro__incident", getClassForSeverity(incident.severity)));
+  item.appendChild(makeEl("span", classNames("dcmetro__incidentSeverity", getClassForSeverity(incident.severity)), incident.severityLabel));
+  item.appendChild(makeEl("span", "dcmetro__incidentLine", incident.affectedLines));
+  if (includeDescription) {
+    item.appendChild(makeEl("span", "dcmetro__incidentText", incident.description));
+  }
+  if (incident.dateRangeText) {
+    item.appendChild(makeEl("span", "dcmetro__incidentRange", incident.dateRangeText));
+  }
+  return item;
+}
+
+function limitArray(array, maxLength) {
+  return array.slice(0, Math.max(1, maxLength));
+}
+
+function getScrollDuration(configSpeed, minSpeed = 8) {
+  return `${Math.max(minSpeed, configSpeed)}s`;
+}
 Module.register("MMM-DCMetroTrains", {
   defaults: {
     apiKey: "",
@@ -119,6 +261,7 @@ Module.register("MMM-DCMetroTrains", {
     maxIncidentRows: 3,
     incidentScroll: false,
     incidentScrollSpeed: 28,
+    incidentScrollSpeedMin: 8,
     etaColorMode: "status",
     carsColorMode: "wmata",
     statusThresholds: {
@@ -180,9 +323,7 @@ Module.register("MMM-DCMetroTrains", {
     autoCompact: true,
     commuteMaxRows: 5,
     compact: false,
-    animationSpeed: 1000,
-    showFirstLastTrains: false,
-    firstLastTrainMode: "filtered"
+    animationSpeed: 1000
   },
 
   start() {
@@ -192,16 +333,28 @@ Module.register("MMM-DCMetroTrains", {
       incidents: [],
       weather: null,
       fetchedAt: null,
-      error: null
+      error: null,
+      errorAt: null
     };
     this.currentStationIndex = 0;
     this.rotationTimer = null;
     this.retryTimer = null;
     this.loaded = false;
-    this.stationProfiles = this.resolveStationProfiles();
 
     this.sendSocketNotification("DC_METRO_CONFIG", this.config);
     this.startRotation();
+  },
+
+  stop() {
+    if (this.rotationTimer) {
+      clearInterval(this.rotationTimer);
+      this.rotationTimer = null;
+    }
+
+    if (this.retryTimer) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = null;
+    }
   },
 
   getStyles() {
@@ -218,8 +371,17 @@ Module.register("MMM-DCMetroTrains", {
     const showBackground = parseBoolean(this.config.showBackground, true);
     const shouldBlinkCritical = this.config.blinkOnCritical && this.hasCriticalIncident();
     const showMetroBus = parseBoolean(this.config.showMetroBus, false) || isMetroBusOnly;
-    wrapper.className = `dcmetro ${isCompact ? "dcmetro--compact" : ""} ${isMetroBusOnly ? "dcmetro--busOnly" : ""} ${isCommuteTime ? "dcmetro--commute" : ""} ${isQuietHours ? "dcmetro--quiet" : ""} ${shouldBlinkCritical ? "dcmetro--criticalBlink" : ""} ${showBorders ? "" : "dcmetro--noBorders"} ${showBackground ? "" : "dcmetro--noBackground"}`.trim();
-    wrapper.style.fontSize = `${parseNumber(this.config.fontScale, 1)}em`;
+    wrapper.className = classNames(
+      "dcmetro",
+      isCompact && "dcmetro--compact",
+      isMetroBusOnly && "dcmetro--busOnly",
+      isCommuteTime && "dcmetro--commute",
+      isQuietHours && "dcmetro--quiet",
+      shouldBlinkCritical && "dcmetro--criticalBlink",
+      !showBorders && "dcmetro--noBorders",
+      !showBackground && "dcmetro--noBackground"
+    );
+    wrapper.style.fontSize = `${this.getConfigNumber("fontScale", 1)}em`;
 
     if (!showBorders) {
       wrapper.style.border = "none";
@@ -238,7 +400,7 @@ Module.register("MMM-DCMetroTrains", {
       return wrapper;
     }
 
-    if (this.dataState.error) {
+    if (this.isErrorRecent()) {
       wrapper.classList.add("bright", "small", "dcmetro__error");
       wrapper.textContent = this.dataState.error;
       return wrapper;
@@ -274,14 +436,32 @@ Module.register("MMM-DCMetroTrains", {
     }
 
     if (this.config.showLastUpdated && this.dataState.fetchedAt) {
-      const stamp = document.createElement("div");
-      const freshness = this.getFreshnessState(this.dataState.fetchedAt);
-      stamp.className = `dcmetro__updated xsmall dimmed ${freshness.isStale ? "dcmetro__updated--stale" : ""}`.trim();
-      stamp.textContent = `Updated ${this.relativeTime(this.dataState.fetchedAt)}`;
-      wrapper.appendChild(stamp);
+      const freshness = this.extractFreshness(this.dataState.fetchedAt);
+      wrapper.appendChild(makeEl("div", classNames("dcmetro__updated xsmall dimmed", getStaleClass(freshness.isStale)), `Updated ${this.relativeTime(this.dataState.fetchedAt)}`));
     }
 
     return wrapper;
+  },
+
+  buildTableHeader(columns) {
+    const head = makeEl("thead");
+    const headRow = makeEl("tr");
+    columns.forEach((label) => {
+      headRow.appendChild(makeEl("th", null, label));
+    });
+    head.appendChild(headRow);
+    return head;
+  },
+
+  shouldShowWeather() {
+    return parseBoolean(this.config.showWeather, false) && this.dataState.weather;
+  },
+
+  buildSummaryChip(labelText, valueText, extraClass) {
+    const chip = makeEl("div", classNames("dcmetro__summaryChip", extraClass));
+    chip.appendChild(makeEl("span", "dcmetro__summaryLabel", labelText));
+    chip.appendChild(makeEl("span", null, valueText));
+    return chip;
   },
 
   buildSummaryStrip(isCommuteTime, isCompact, isQuietHours) {
@@ -290,63 +470,26 @@ Module.register("MMM-DCMetroTrains", {
       return null;
     }
 
-    const summary = document.createElement("div");
-    summary.className = "dcmetro__summary";
+    const summary = makeEl("div", "dcmetro__summary");
+    const freshness = this.extractFreshness(this.dataState.fetchedAt);
 
     if (this.config.showNextSummary && !isQuietHours) {
       const next = station.nextSummary || [];
       if (next.length) {
-        const chip = document.createElement("div");
-        chip.className = "dcmetro__summaryChip";
-        const label = document.createElement("span");
-        label.className = "dcmetro__summaryLabel";
-        label.textContent = "Next";
-        const value = document.createElement("span");
-        value.textContent = next.map((item) => `${item.line} ${item.destination} ${item.displayMinutes}`).join(" • ");
-        chip.appendChild(label);
-        chip.appendChild(value);
-        summary.appendChild(chip);
+        summary.appendChild(this.buildSummaryChip("Next", next.map((item) => `${item.line} ${item.destination} ${item.displayMinutes}`).join(" • ")));
       }
     }
 
     if (this.config.showFreshnessChip && this.dataState.fetchedAt) {
-      const freshness = this.getFreshnessState(this.dataState.fetchedAt);
-      const chip = document.createElement("div");
-      chip.className = `dcmetro__summaryChip ${freshness.isStale ? "dcmetro__summaryChip--stale" : ""}`.trim();
-      const label = document.createElement("span");
-      label.className = "dcmetro__summaryLabel";
-      label.textContent = freshness.isStale ? "Stale" : "Fresh";
-      const value = document.createElement("span");
-      value.textContent = this.relativeTime(this.dataState.fetchedAt);
-      chip.appendChild(label);
-      chip.appendChild(value);
-      summary.appendChild(chip);
+      summary.appendChild(this.buildSummaryChip(freshness.isStale ? "Stale" : "Fresh", this.relativeTime(this.dataState.fetchedAt), freshness.isStale ? "dcmetro__summaryChip--stale" : null));
     }
 
     if (isCommuteTime && !isQuietHours) {
-      const chip = document.createElement("div");
-      chip.className = `dcmetro__summaryChip ${isCompact ? "dcmetro__summaryChip--compact" : ""}`.trim();
-      const label = document.createElement("span");
-      label.className = "dcmetro__summaryLabel";
-      label.textContent = "Commute";
-      const value = document.createElement("span");
-      value.textContent = isCompact ? "Compact mode" : "Peak window";
-      chip.appendChild(label);
-      chip.appendChild(value);
-      summary.appendChild(chip);
+      summary.appendChild(this.buildSummaryChip("Commute", isCompact ? "Compact mode" : "Peak window", isCompact ? "dcmetro__summaryChip--compact" : null));
     }
 
-    if (this.dataState.weather && this.config.showWeather && !isQuietHours) {
-      const chip = document.createElement("div");
-      chip.className = "dcmetro__summaryChip";
-      const label = document.createElement("span");
-      label.className = "dcmetro__summaryLabel";
-      label.textContent = "Weather";
-      const value = document.createElement("span");
-      value.textContent = this.formatWeather(this.dataState.weather);
-      chip.appendChild(label);
-      chip.appendChild(value);
-      summary.appendChild(chip);
+    if (this.shouldShowWeather() && !isQuietHours) {
+      summary.appendChild(this.buildSummaryChip("Weather", this.formatWeather(this.dataState.weather)));
     }
 
     return summary.childNodes.length ? summary : null;
@@ -354,8 +497,8 @@ Module.register("MMM-DCMetroTrains", {
 
   buildStationCard(station, isCompact) {
     const card = document.createElement("section");
-    const freshness = this.getFreshnessState(this.dataState.fetchedAt);
-    card.className = `dcmetro__stationCard ${station.alerts.length ? "dcmetro__stationCard--alert" : ""} ${freshness.isStale ? "dcmetro__stationCard--stale" : ""}`.trim();
+    const freshness = this.extractFreshness(this.dataState.fetchedAt);
+    card.className = classNames("dcmetro__stationCard", isNotEmpty(ensureArray(station.alerts)) && "dcmetro__stationCard--alert", freshness.isStale && "dcmetro__stationCard--stale");
 
     if (this.config.showHeader) {
       card.appendChild(this.buildHeader(station));
@@ -365,19 +508,12 @@ Module.register("MMM-DCMetroTrains", {
       card.appendChild(this.buildConditionsRow(station));
     }
 
-    if (station.alerts.length) {
+    if (isNotEmpty(ensureArray(station.alerts))) {
       card.appendChild(this.buildAlertBanner(station.alerts));
     }
 
-    if (this.config.showNextSummary && station.nextSummary.length) {
+    if (this.config.showNextSummary && isNotEmpty(station.nextSummary)) {
       card.appendChild(this.buildForecastSummary(station.nextSummary));
-    }
-
-    if (station.profile.showFirstLastTrains && station.firstLastTrains) {
-      const firstLastBlock = this.buildFirstLastTrainsBlock(station);
-      if (firstLastBlock) {
-        card.appendChild(firstLastBlock);
-      }
     }
 
     card.appendChild(this.buildArrivals(station, isCompact));
@@ -385,36 +521,20 @@ Module.register("MMM-DCMetroTrains", {
   },
 
   buildHeader(station) {
-    const header = document.createElement("div");
-    header.className = "dcmetro__header";
-
-    const title = document.createElement("div");
-    title.className = "dcmetro__station";
-    title.textContent = this.formatStationTitle(station);
-    header.appendChild(title);
-
-    const meta = document.createElement("div");
-    meta.className = "dcmetro__meta";
+    const header = makeEl("div", "dcmetro__header");
+    header.appendChild(makeEl("div", "dcmetro__station", this.formatStationTitle(station)));
+    const meta = makeEl("div", "dcmetro__meta");
 
     if (this.config.showStationCode) {
-      const code = document.createElement("span");
-      code.className = "dcmetro__chip";
-      code.textContent = station.code;
-      meta.appendChild(code);
+      meta.appendChild(makeEl("span", "dcmetro__chip", station.code));
     }
 
     if (this.dataState.stations.length > 1 && this.config.rotateStations) {
-      const index = document.createElement("span");
-      index.className = "dcmetro__chip";
-      index.textContent = `${this.currentStationIndex + 1}/${this.dataState.stations.length}`;
-      meta.appendChild(index);
+      meta.appendChild(makeEl("span", "dcmetro__chip", `${this.currentStationIndex + 1}/${this.dataState.stations.length}`));
     }
 
     if (station.profile.compact) {
-      const compactChip = document.createElement("span");
-      compactChip.className = "dcmetro__chip";
-      compactChip.textContent = "Compact";
-      meta.appendChild(compactChip);
+      meta.appendChild(makeEl("span", "dcmetro__chip", "Compact"));
     }
 
     header.appendChild(meta);
@@ -422,144 +542,52 @@ Module.register("MMM-DCMetroTrains", {
   },
 
   buildConditionsRow(station) {
-    const conditions = document.createElement("div");
-    conditions.className = "dcmetro__conditions";
+    const conditions = makeEl("div", "dcmetro__conditions");
+    const conditionText = station.conditionText || "Unknown status";
+    const conditionClass = station.conditionClass || "dcmetro__condition--normal";
+    conditions.appendChild(makeEl("div", classNames("dcmetro__condition", conditionClass), conditionText));
 
-    const transitChip = document.createElement("div");
-    transitChip.className = `dcmetro__condition ${station.conditionClass || "dcmetro__condition--normal"}`.trim();
-    transitChip.textContent = station.conditionText;
-    conditions.appendChild(transitChip);
-
-    if (this.config.showWeather && this.dataState.weather) {
-      const weatherChip = document.createElement("div");
-      weatherChip.className = "dcmetro__condition dcmetro__condition--weather";
-      weatherChip.textContent = this.formatWeather(this.dataState.weather);
-      conditions.appendChild(weatherChip);
+    if (this.shouldShowWeather()) {
+      conditions.appendChild(makeEl("div", "dcmetro__condition dcmetro__condition--weather", this.formatWeather(this.dataState.weather)));
     }
 
     return conditions;
   },
 
   buildAlertBanner(alerts) {
-    const banner = document.createElement("div");
-    banner.className = "dcmetro__alerts";
-
-    alerts.slice(0, 3).forEach((alert) => {
-      const item = document.createElement("div");
-      item.className = `dcmetro__alert dcmetro__alert--${alert.severity}`;
-      item.textContent = alert.message;
-      banner.appendChild(item);
-    });
-
-    return banner;
+    return this.buildAlerts(alerts);
   },
 
   buildForecastSummary(nextSummary) {
-    const forecast = document.createElement("div");
-    forecast.className = "dcmetro__forecast";
-
-    nextSummary.slice(0, this.config.summaryCount).forEach((prediction) => {
-      const chip = document.createElement("span");
-      chip.className = `dcmetro__forecastChip dcmetro__forecastChip--${prediction.statusClass}`;
-      chip.textContent = `${prediction.line} ${prediction.destination} ${prediction.displayMinutes}`;
-      forecast.appendChild(chip);
+    if (isEmpty(nextSummary)) {
+      return null;
+    }
+    const forecast = makeEl("div", "dcmetro__forecast");
+    const count = Math.max(1, this.config.summaryCount || 3);
+    limitArray(nextSummary, count).forEach((prediction) => {
+      forecast.appendChild(buildForecastChip(prediction));
     });
-
     return forecast;
   },
 
-  buildFirstLastTrainsBlock(station) {
-    const firstLastData = station.firstLastTrains;
-    if (!firstLastData) {
-      return null;
-    }
-
-    const container = document.createElement("div");
-    container.className = "dcmetro__firstLast";
-
-    const title = document.createElement("div");
-    title.className = "dcmetro__firstLastTitle small dimmed";
-    title.textContent = "First & Last Service";
-    container.appendChild(title);
-
-    const directions = ["northbound", "southbound"];
-    let hasAnyTimes = false;
-    directions.forEach((dir) => {
-      const data = firstLastData[dir];
-      if (!data) return;
-
-      if (!data.first && !data.last) {
-        return;
-      }
-
-      hasAnyTimes = true;
-
-      const directionSection = document.createElement("div");
-      directionSection.className = `dcmetro__firstLastDir dcmetro__firstLastDir--${dir}`;
-
-      const dirLabel = document.createElement("span");
-      dirLabel.className = "dcmetro__firstLastDirLabel xsmall dimmed";
-      dirLabel.textContent = dir === "northbound" ? "NB" : "SB";
-      directionSection.appendChild(dirLabel);
-
-      const times = document.createElement("span");
-      times.className = "dcmetro__firstLastTimes";
-
-      if (data.first) {
-        const firstSpan = document.createElement("span");
-        firstSpan.className = "dcmetro__firstLastTime";
-        firstSpan.textContent = `First: ${data.first.time}`;
-        times.appendChild(firstSpan);
-      }
-
-      if (data.last) {
-        const lastSpan = document.createElement("span");
-        lastSpan.className = "dcmetro__firstLastTime";
-        lastSpan.textContent = `Last: ${data.last.time}`;
-        times.appendChild(lastSpan);
-      }
-
-      directionSection.appendChild(times);
-      container.appendChild(directionSection);
-    });
-
-    if (!hasAnyTimes) {
-      return null;
-    }
-
-    return container;
-  },
-
   buildArrivals(station, isCompact) {
-    const includeLine = !this.getStationEffectiveSetting(station, "groupByLine", this.config.groupByLine);
-    const rows = station.predictions.slice(0, this.getStationEffectiveRows(station, isCompact));
+    const groupByLine = this.getStationEffectiveSetting(station, "groupByLine", this.config.groupByLine);
+    const includeLine = !groupByLine;
+    const rows = limitArray(station.predictions, this.getStationEffectiveRows(station, isCompact));
 
-    if (!rows.length) {
-      const empty = document.createElement("div");
-      empty.className = "dcmetro__empty dimmed";
-      empty.textContent = this.getFallbackMessage("No upcoming trains.");
-      return empty;
+    if (isEmpty(rows)) {
+      return makeEl("div", "dcmetro__empty dimmed", this.getFallbackMessage("No upcoming trains."));
     }
 
-    if (this.getStationEffectiveSetting(station, "groupByLine", this.config.groupByLine)) {
+    if (groupByLine) {
       const grouped = this.groupPredictionsByLine(rows);
-      const container = document.createElement("div");
-      container.className = "dcmetro__groups";
+      const container = makeEl("div", "dcmetro__groups");
 
       grouped.forEach((group) => {
-        const section = document.createElement("section");
-        section.className = "dcmetro__group";
-
-        const groupHeader = document.createElement("div");
-        groupHeader.className = "dcmetro__groupHeader";
-        const badge = this.buildLineBadge(group.line);
-        groupHeader.appendChild(badge);
-
-        const groupMeta = document.createElement("span");
-        groupMeta.className = "dcmetro__groupMeta dimmed xsmall";
-        groupMeta.textContent = `${group.predictions.length} trains`;
-        groupHeader.appendChild(groupMeta);
-
+        const section = makeEl("section", "dcmetro__group");
+        const groupHeader = makeEl("div", "dcmetro__groupHeader");
+        groupHeader.appendChild(this.buildLineBadge(group.line));
+        groupHeader.appendChild(makeEl("span", "dcmetro__groupMeta dimmed xsmall", `${group.predictions.length} trains`));
         section.appendChild(groupHeader);
         section.appendChild(this.buildPredictionTable(group.predictions, includeLine, true));
         container.appendChild(section);
@@ -572,11 +600,7 @@ Module.register("MMM-DCMetroTrains", {
   },
 
   buildPredictionTable(predictions, includeLine, groupedMode) {
-    const table = document.createElement("table");
-    table.className = `dcmetro__table small ${groupedMode ? "dcmetro__table--grouped" : "dcmetro__table--flat"}`;
-
-    const head = document.createElement("thead");
-    const headRow = document.createElement("tr");
+    const table = makeEl("table", classNames("dcmetro__table small", groupedMode && "dcmetro__table--grouped", !groupedMode && "dcmetro__table--flat"));
 
     const columns = [];
     if (includeLine) {
@@ -594,56 +618,34 @@ Module.register("MMM-DCMetroTrains", {
       columns.push("Status");
     }
 
-    columns.forEach((label) => {
-      const th = document.createElement("th");
-      th.textContent = label;
-      headRow.appendChild(th);
-    });
+    table.appendChild(this.buildTableHeader(columns));
 
-    head.appendChild(headRow);
-    table.appendChild(head);
-
-    const body = document.createElement("tbody");
+    const body = makeEl("tbody");
 
     predictions.forEach((prediction) => {
-      const row = document.createElement("tr");
-      row.className = `dcmetro__row dcmetro__row--${prediction.statusClass} ${prediction.alerts.length ? "dcmetro__row--alert" : ""}`.trim();
+      const row = makeEl("tr");
+      row.className = classNames(`dcmetro__row dcmetro__row--${prediction.statusClass}`, getRowAlertClass(prediction.alerts));
 
       if (includeLine) {
-        const lineCell = document.createElement("td");
+        const lineCell = makeEl("td");
         lineCell.appendChild(this.buildLineBadge(prediction.line));
         row.appendChild(lineCell);
       }
 
-      const destination = document.createElement("td");
-      destination.className = "dcmetro__dest";
-      destination.textContent = prediction.destination;
-      row.appendChild(destination);
+      row.appendChild(this.buildDestinationCell(prediction.destination));
 
       if (this.config.showDirection) {
-        const direction = document.createElement("td");
-        direction.className = "dcmetro__dir dimmed";
-        direction.textContent = prediction.direction;
-        row.appendChild(direction);
+        row.appendChild(this.buildDirectionCell(prediction));
       }
 
-      const minutes = document.createElement("td");
-      minutes.className = `dcmetro__eta ${this.getEtaClass(prediction)}`.trim();
-      minutes.textContent = prediction.displayMinutes;
-      row.appendChild(minutes);
+      row.appendChild(this.buildEtaCell(prediction));
 
       if (this.config.showCars) {
-        const cars = document.createElement("td");
-        cars.className = `dcmetro__cars ${this.getCarsClassForMode(prediction)}`.trim();
-        cars.textContent = prediction.carsLabel;
-        row.appendChild(cars);
+        row.appendChild(this.buildCarsCell(prediction));
       }
 
       if (this.config.showStatus) {
-        const status = document.createElement("td");
-        status.className = `dcmetro__status dcmetro__status--${prediction.statusClass}`;
-        status.textContent = prediction.statusLabel;
-        row.appendChild(status);
+        row.appendChild(this.buildStatusCell(prediction));
       }
 
       body.appendChild(row);
@@ -654,74 +656,50 @@ Module.register("MMM-DCMetroTrains", {
   },
 
   buildLineBadge(lineCode) {
-    const line = String(lineCode || "NA").toLowerCase();
-    const badge = document.createElement("span");
-    badge.className = `dcmetro__line dcmetro__line--${line}`;
-    badge.textContent = lineCode || "--";
-    return badge;
+    const line = String(lineCode || NA_LINE).toLowerCase();
+    return makeEl("span", `dcmetro__line dcmetro__line--${line}`, lineCode || "--");
   },
 
   buildIncidents() {
-    const container = document.createElement("div");
-    container.className = "dcmetro__incidents";
-
+    const container = makeEl("div", "dcmetro__incidents");
     const incidents = this.getFilteredIncidentsForDisplay();
-    const maxIncidentRows = Math.max(1, parseNumber(this.config.maxIncidentRows, 3));
 
     if (this.config.incidentScroll) {
       container.classList.add("dcmetro__incidents--scroll");
-      container.style.setProperty("--dcmetro-incident-scroll-duration", `${Math.max(8, parseNumber(this.config.incidentScrollSpeed, 28))}s`);
+      container.style.setProperty("--dcmetro-incident-scroll-duration", this.getIncidentScrollDuration());
     }
 
-    if (!incidents.length) {
+    if (isEmpty(incidents)) {
       container.classList.add("xsmall", "dimmed");
       container.textContent = "No active Metro service alerts.";
       return container;
     }
 
-    incidents.slice(0, maxIncidentRows).forEach((incident) => {
-      const line = document.createElement("div");
-      line.className = `dcmetro__incident dcmetro__incident--${incident.severity}`;
-
-      const chip = document.createElement("span");
-      chip.className = `dcmetro__incidentSeverity dcmetro__incidentSeverity--${incident.severity}`;
-      chip.textContent = incident.severityLabel;
-      line.appendChild(chip);
+    limitArray(incidents, this.getMaxIncidentRows()).forEach((incident) => {
+      const item = makeEl("div", classNames("dcmetro__incident", getClassForSeverity(incident.severity)));
+      item.appendChild(makeEl("span", classNames("dcmetro__incidentSeverity", getClassForSeverity(incident.severity)), incident.severityLabel));
 
       if (incident.dateRangeText) {
-        const range = document.createElement("span");
-        range.className = "dcmetro__incidentRange";
-        range.textContent = incident.dateRangeText;
-        line.appendChild(range);
+        item.appendChild(makeEl("span", "dcmetro__incidentRange", incident.dateRangeText));
       }
 
-      const text = document.createElement("span");
-      text.textContent = `${incident.linesText}: ${incident.description}`;
-      line.appendChild(text);
-
-      container.appendChild(line);
+      item.appendChild(makeEl("span", null, `${incident.linesText}: ${incident.description}`));
+      container.appendChild(item);
     });
 
     return container;
   },
 
   buildMetroBusSection() {
-    const section = document.createElement("section");
-    section.className = "dcmetro__bus";
+    const section = makeEl("section", "dcmetro__bus");
 
     if (this.config.showMetroBusHeader) {
-      const header = document.createElement("div");
-      header.className = "dcmetro__busHeader";
-      header.textContent = "Metrobus";
-      section.appendChild(header);
+      section.appendChild(makeEl("div", "dcmetro__busHeader", "Metrobus"));
     }
 
-    const stops = Array.isArray(this.dataState.busStops) ? this.dataState.busStops : [];
-    if (!stops.length) {
-      const empty = document.createElement("div");
-      empty.className = "dcmetro__empty dimmed";
-      empty.textContent = "No Metrobus stops configured.";
-      section.appendChild(empty);
+    const stops = ensureArray(this.dataState.busStops);
+    if (isEmpty(stops)) {
+      section.appendChild(makeEl("div", "dcmetro__empty dimmed", "No Metrobus stops configured."));
       return section;
     }
 
@@ -733,55 +711,24 @@ Module.register("MMM-DCMetroTrains", {
   },
 
   buildMetroBusStopCard(stop) {
-    const card = document.createElement("div");
-    card.className = "dcmetro__busStop";
+    const card = makeEl("div", "dcmetro__busStop");
+    card.appendChild(makeEl("div", "dcmetro__busStopName", stop.name || stop.stopId));
 
-    const title = document.createElement("div");
-    title.className = "dcmetro__busStopName";
-    title.textContent = stop.name || stop.stopId;
-    card.appendChild(title);
-
-    const predictions = Array.isArray(stop.predictions) ? stop.predictions : [];
-    if (!predictions.length) {
-      const empty = document.createElement("div");
-      empty.className = "dcmetro__empty dimmed";
-      empty.textContent = "No upcoming buses.";
-      card.appendChild(empty);
+    const predictions = ensureArray(stop.predictions);
+    if (isEmpty(predictions)) {
+      card.appendChild(makeEl("div", "dcmetro__empty dimmed", "No upcoming buses."));
       return card;
     }
 
-    const table = document.createElement("table");
-    table.className = "dcmetro__table small dcmetro__busTable";
+    const table = makeEl("table", "dcmetro__table small dcmetro__busTable");
+    table.appendChild(this.buildTableHeader(["Route", "Destination", "Min"]));
 
-    const head = document.createElement("thead");
-    const headRow = document.createElement("tr");
-    ["Route", "Destination", "Min"].forEach((label) => {
-      const th = document.createElement("th");
-      th.textContent = label;
-      headRow.appendChild(th);
-    });
-    head.appendChild(headRow);
-    table.appendChild(head);
-
-    const body = document.createElement("tbody");
-    predictions.slice(0, Math.max(1, parseNumber(this.config.metroBusMaxRows, 5))).forEach((prediction) => {
-      const row = document.createElement("tr");
-
-      const route = document.createElement("td");
-      route.className = "dcmetro__busRoute";
-      route.textContent = prediction.route || "--";
-      row.appendChild(route);
-
-      const destination = document.createElement("td");
-      destination.className = "dcmetro__dest";
-      destination.textContent = prediction.destination || "Unknown";
-      row.appendChild(destination);
-
-      const minutes = document.createElement("td");
-      minutes.className = "dcmetro__eta";
-      minutes.textContent = prediction.displayMinutes || "--";
-      row.appendChild(minutes);
-
+    const body = makeEl("tbody");
+    predictions.forEach((prediction) => {
+      const row = makeEl("tr");
+      row.appendChild(makeEl("td", "dcmetro__busRoute", prediction.route || "--"));
+      row.appendChild(makeEl("td", "dcmetro__dest", prediction.destination || "Unknown"));
+      row.appendChild(makeEl("td", "dcmetro__eta", prediction.displayMinutes || "--"));
       body.appendChild(row);
     });
 
@@ -793,10 +740,10 @@ Module.register("MMM-DCMetroTrains", {
   getVisibleStations() {
     let visibleStations = this.dataState.stations;
     if (this.config.hideWhenNoTrains) {
-      visibleStations = visibleStations.filter((station) => (station.predictions || []).length > 0);
+      visibleStations = visibleStations.filter((station) => isNotEmpty(ensureArray(station.predictions)));
     }
 
-    if (!visibleStations.length) {
+    if (isEmpty(visibleStations)) {
       return [];
     }
 
@@ -828,11 +775,15 @@ Module.register("MMM-DCMetroTrains", {
     }
 
     this.rotationTimer = setInterval(() => {
-      if (this.dataState.stations.length < 2) {
+      const stationPool = this.config.hideWhenNoTrains
+        ? this.dataState.stations.filter((station) => isNotEmpty(ensureArray(station.predictions)))
+        : this.dataState.stations;
+
+      if (stationPool.length < 2) {
         return;
       }
 
-      this.currentStationIndex = (this.currentStationIndex + 1) % this.dataState.stations.length;
+      this.currentStationIndex = (this.currentStationIndex + 1) % stationPool.length;
       this.updateDom(this.config.animationSpeed);
     }, this.config.stationRotationInterval);
   },
@@ -846,7 +797,8 @@ Module.register("MMM-DCMetroTrains", {
         incidents: payload.incidents || [],
         weather: payload.weather || null,
         fetchedAt: payload.fetchedAt || Date.now(),
-        error: null
+        error: null,
+        errorAt: null
       };
 
       if (this.currentStationIndex >= this.dataState.stations.length) {
@@ -860,110 +812,29 @@ Module.register("MMM-DCMetroTrains", {
     if (notification === "DC_METRO_ERROR") {
       this.loaded = true;
       this.dataState.error = payload || "Unable to load Metro train data.";
+      this.dataState.errorAt = Date.now();
       this.updateDom(this.config.animationSpeed);
     }
   },
 
-  resolveStationProfiles() {
-    const configuredStations = Array.isArray(this.config.stationCodes) && this.config.stationCodes.length
-      ? this.config.stationCodes
-      : ["A01"];
-
-    return configuredStations
-      .map((entry, index) => this.normalizeStationProfile(entry, index))
-      .filter(Boolean);
-  },
-
-  normalizeStationProfile(entry, index) {
-    const isObject = entry && typeof entry === "object" && !Array.isArray(entry);
-    const code = isObject ? entry.code || entry.stationCode || entry.id : entry;
-
-    if (!code) {
-      return null;
-    }
-
-    const profile = {
-      code: String(code).trim(),
-      name: isObject ? entry.name || entry.label || null : null,
-      lineFilter: isObject && entry.lineFilter ? normalizeList(entry.lineFilter) : normalizeList(this.config.lineFilter),
-      destinationIncludes: isObject && entry.destinationIncludes ? normalizeList(entry.destinationIncludes) : normalizeList(this.config.destinationIncludes),
-      maxRows: parseNumber(isObject && entry.maxRows != null ? entry.maxRows : this.config.maxRows, this.config.maxRows),
-      compact: Boolean(isObject && entry.compact != null ? entry.compact : this.config.compact),
-      groupByLine: isObject && entry.groupByLine != null ? Boolean(entry.groupByLine) : Boolean(this.config.groupByLine),
-      showIncidents: isObject && entry.showIncidents != null ? Boolean(entry.showIncidents) : Boolean(this.config.showIncidents),
-      alerts: normalizeList(isObject && entry.alerts ? entry.alerts : this.config.alertRules),
-      showFirstLastTrains: isObject && entry.showFirstLastTrains != null ? Boolean(entry.showFirstLastTrains) : Boolean(this.config.showFirstLastTrains),
-      firstLastTrainMode: isObject && entry.firstLastTrainMode ? String(entry.firstLastTrainMode).toLowerCase() : String(this.config.firstLastTrainMode || "filtered").toLowerCase(),
-      priority: parseNumber(isObject && entry.priority != null ? entry.priority : index, index)
-    };
-
-    return profile;
-  },
-
   groupPredictionsByLine(predictions) {
-    const grouped = {};
-
-    predictions.forEach((prediction) => {
-      const line = String(prediction.line || "NA").toUpperCase();
-      if (!grouped[line]) {
-        grouped[line] = [];
-      }
-
-      grouped[line].push(prediction);
-    });
-
-    return Object.keys(grouped)
-      .sort((a, b) => this.getLineWeight(a) - this.getLineWeight(b))
-      .map((line) => ({
-        line,
-        predictions: grouped[line].slice(0).sort((a, b) => {
-          if (a.minutesSort !== b.minutesSort) {
-            return a.minutesSort - b.minutesSort;
-          }
-
-          return a.destination.localeCompare(b.destination);
-        })
-      }));
+    return createPredictionGroups(predictions, this.config.lineOrder, this.getLineWeight.bind(this));
   },
 
-  getLineWeight(lineCode) {
-    const customOrder = normalizeList(this.config.lineOrder).map((entry) => entry.toUpperCase());
-    const normalizedLine = String(lineCode || "NA").toUpperCase();
-    const index = customOrder.indexOf(normalizedLine);
-    if (index >= 0) {
-      return index + 1;
-    }
-
-    return lineSortWeight(normalizedLine);
+  getLineWeight(lineCode, customOrder) {
+    const order = customOrder || normalizeLineOrderToUpperCase(this.config.lineOrder);
+    return calculateLineWeight(lineCode, order);
   },
 
   getEtaClass(prediction) {
-    const mode = String(this.config.etaColorMode || "status").toLowerCase();
+    const mode = this.getConfigString("etaColorMode", "status");
     if (mode === "off") {
       return "";
     }
 
     if (mode === "gradient") {
-      if (prediction.displayMinutes === "Boarding" || prediction.displayMinutes === "Arriving") {
-        return "dcmetro__eta--boarding";
-      }
-
-      const minutes = parseNumber(prediction.minutesSort, 999);
-      const thresholds = this.config.statusThresholds || {};
-      const watchMinutes = parseNumber(thresholds.watchMinutes, 8);
-      const delayedMinutes = parseNumber(thresholds.delayedMinutes, 15);
-      const criticalMinutes = parseNumber(thresholds.criticalMinutes, 25);
-
-      if (minutes >= criticalMinutes) {
-        return "dcmetro__eta--critical";
-      }
-      if (minutes >= delayedMinutes) {
-        return "dcmetro__eta--delayed";
-      }
-      if (minutes >= watchMinutes) {
-        return "dcmetro__eta--watch";
-      }
-      return "dcmetro__eta--normal";
+      const map = { boarding: "boarding", arriving: "boarding", alert: "critical", critical: "critical", delayed: "delayed", watch: "watch" };
+      return `dcmetro__eta--${map[prediction.statusClass] || "normal"}`;
     }
 
     return `dcmetro__eta--${prediction.statusClass}`;
@@ -972,7 +843,7 @@ Module.register("MMM-DCMetroTrains", {
   getCarsClassForMode(prediction) {
     const mode = parseBoolean(this.config.showCarHighlights, false)
       ? "capacity"
-      : String(this.config.carsColorMode || "wmata").toLowerCase();
+      : this.getConfigString("carsColorMode", "wmata");
     if (mode === "off") {
       return "dcmetro__cars--off";
     }
@@ -982,23 +853,58 @@ Module.register("MMM-DCMetroTrains", {
     }
 
     if (mode === "wmata") {
-      if (prediction.carsClass === "dcmetro__cars--high") {
-        return "dcmetro__cars--wmata-high";
-      }
-      if (prediction.carsClass === "dcmetro__cars--medium") {
-        return "dcmetro__cars--wmata-medium";
-      }
-      if (prediction.carsClass === "dcmetro__cars--low") {
-        return "dcmetro__cars--wmata-low";
-      }
-      return "dcmetro__cars--unknown";
+      const wmataMap = {
+        "dcmetro__cars--high": "dcmetro__cars--wmata-high",
+        "dcmetro__cars--medium": "dcmetro__cars--wmata-medium",
+        "dcmetro__cars--low": "dcmetro__cars--wmata-low"
+      };
+      return wmataMap[prediction.carsClass] || "dcmetro__cars--unknown";
     }
 
-    return prediction.carsClass || "dcmetro__cars--unknown";
+    // Default for unknown modes
+    return "dcmetro__cars--unknown";
+  },
+
+  buildEtaCell(prediction) {
+    return makeEl("td", classNames("dcmetro__eta", this.getEtaClass(prediction)), prediction.displayMinutes);
+  },
+
+  buildCarsCell(prediction) {
+    return makeEl("td", classNames("dcmetro__cars", this.getCarsClassForMode(prediction)), prediction.carsLabel);
+  },
+
+  buildStatusCell(prediction) {
+    return makeEl("td", classNames("dcmetro__status", getStatusClassName(prediction.statusClass)), prediction.statusLabel);
+  },
+
+  buildDirectionCell(prediction) {
+    return makeEl("td", "dcmetro__dir dimmed", prediction.direction);
+  },
+
+  buildDestinationCell(destination) {
+    return makeEl("td", "dcmetro__dest", destination);
+  },
+
+  buildAlerts(alerts, maxCount = 3) {
+    const banner = makeEl("div", "dcmetro__alerts");
+    limitArray(alerts, maxCount).forEach((alert) => {
+      banner.appendChild(makeEl("div", `dcmetro__alert dcmetro__alert--${alert.severity}`, alert.message));
+    });
+    return banner;
+  },
+
+  getMaxIncidentRows() {
+    return Math.max(1, this.getConfigNumber("maxIncidentRows", 3));
+  },
+
+  getIncidentScrollDuration() {
+    const speed = this.getConfigNumber("incidentScrollSpeed", 28);
+    const minSpeed = this.getConfigNumber("incidentScrollSpeedMin", 8);
+    return getScrollDuration(speed, minSpeed);
   },
 
   getFilteredIncidentsForDisplay() {
-    let incidents = (this.dataState.incidents || []).filter((incident) => this.matchesSeverityFilter(incident.severity));
+    const incidents = ensureArray(this.dataState.incidents).filter((incident) => this.matchesSeverityFilter(incident.severity));
 
     if (!this.config.onlyShowAlertsForVisibleLines) {
       return incidents;
@@ -1006,8 +912,8 @@ Module.register("MMM-DCMetroTrains", {
 
     const visibleLines = new Set();
     this.getVisibleStations().forEach((station) => {
-      (station.predictions || []).forEach((prediction) => {
-        visibleLines.add(String(prediction.line || "").toUpperCase());
+      ensureArray(station.predictions).forEach((prediction) => {
+        visibleLines.add(normalizeLineCode(prediction.line, ""));
       });
     });
 
@@ -1015,19 +921,19 @@ Module.register("MMM-DCMetroTrains", {
       return [];
     }
 
-    incidents = incidents.filter((incident) => {
+    const filtered = incidents.filter((incident) => {
       const lines = incident.lineCodes || [];
-      if (!lines.length) {
+      if (isEmpty(lines)) {
         return true;
       }
-      return lines.some((line) => visibleLines.has(String(line || "").toUpperCase()));
+      return lines.some((line) => visibleLines.has(normalizeLineCode(line, "")));
     });
 
-    return incidents;
+    return filtered;
   },
 
   hasCriticalIncident() {
-    return this.getFilteredIncidentsForDisplay().some((incident) => String(incident.severity || "").toLowerCase() === "critical");
+    return this.getFilteredIncidentsForDisplay().some((incident) => this.isCriticalSeverity(incident.severity));
   },
 
   isQuietHours() {
@@ -1039,15 +945,23 @@ Module.register("MMM-DCMetroTrains", {
   matchesAnyWindow(now, schedule) {
     const day = now.getDay();
     const isWeekend = day === 0 || day === 6;
-    const windows = Array.isArray(isWeekend ? schedule.weekends : schedule.weekdays)
-      ? (isWeekend ? schedule.weekends : schedule.weekdays)
-      : [];
+    const raw = isWeekend ? schedule.weekends : schedule.weekdays;
+    const windows = Array.isArray(raw) ? raw : [];
 
     return windows.some((window) => this.matchesWindow(now, window));
   },
 
+  isErrorRecent() {
+    const ERROR_TIMEOUT_MS = 300000; // 5 minutes
+    if (!this.dataState.error || !this.dataState.errorAt) {
+      return false;
+    }
+
+    return (Date.now() - this.dataState.errorAt) < ERROR_TIMEOUT_MS;
+  },
+
   formatStationTitle(station) {
-    const mode = String(this.config.stationTitleFormat || "name").toLowerCase();
+    const mode = this.getConfigString("stationTitleFormat", "name");
     const name = station.displayName || station.name || station.code;
     const code = station.code || "";
 
@@ -1068,13 +982,10 @@ Module.register("MMM-DCMetroTrains", {
   },
 
   buildDebugOverlay(isCommuteTime, isQuietHours, isCompact) {
-    const debug = document.createElement("div");
-    debug.className = "dcmetro__debug xsmall dimmed";
     const stations = this.getVisibleStations();
-    const rows = stations.reduce((sum, station) => sum + (station.predictions || []).length, 0);
+    const rows = stations.reduce((sum, station) => sum + ensureArray(station.predictions).length, 0);
     const incidents = this.getFilteredIncidentsForDisplay().length;
-    debug.textContent = `Debug stations=${stations.length} rows=${rows} incidents=${incidents} commute=${isCommuteTime} quiet=${isQuietHours} compact=${isCompact} fetched=${this.dataState.fetchedAt || 0}`;
-    return debug;
+    return makeEl("div", "dcmetro__debug xsmall dimmed", `Debug stations=${stations.length} rows=${rows} incidents=${incidents} commute=${isCommuteTime} quiet=${isQuietHours} compact=${isCompact} fetched=${this.dataState.fetchedAt || 0}`);
   },
 
   getStationEffectiveSetting(station, key, fallback) {
@@ -1091,268 +1002,49 @@ Module.register("MMM-DCMetroTrains", {
       return baseRows;
     }
 
-    return clamp(Math.min(baseRows, parseNumber(this.config.commuteMaxRows, 5)), 1, baseRows);
+    return clamp(Math.min(baseRows, this.getConfigNumber("commuteMaxRows", 5)), 1, baseRows);
   },
 
   isMetroBusOnlyMode() {
     return parseBoolean(this.config.metroBusOnlyMode, false);
   },
 
-  fetchWeatherIfConfigured() {
-    const latitude = parseNumber(this.config.weatherLatitude, null);
-    const longitude = parseNumber(this.config.weatherLongitude, null);
-
-    if (!this.config.showWeather || latitude == null || longitude == null) {
-      return Promise.resolve(null);
-    }
-
-    const url = `https://api.open-meteo.com/v1/forecast?latitude=${encodeURIComponent(latitude)}&longitude=${encodeURIComponent(longitude)}&current_weather=true&temperature_unit=fahrenheit&wind_speed_unit=mph&timezone=auto`;
-    return this.getJson(url)
-      .then((response) => response.current_weather || null)
-      .catch(() => null);
-  },
-
-  fetchStationsAndData() {
-    return Promise.all([
-      this.fetchPredictions(),
-      this.fetchIncidents(),
-      this.fetchWeatherIfConfigured()
-    ]);
-  },
-
-  startDataRefresh() {
-    this.fetchAndBroadcast();
-
-    this.fetchTimer = setInterval(() => this.fetchAndBroadcast(), this.config.refreshInterval);
-    this.incidentTimer = setInterval(() => this.fetchAndBroadcast(), this.config.incidentsRefreshInterval);
-  },
-
-  buildStationPayload(groupedPredictions, incidents, weather) {
-    const now = Date.now();
-    const profiles = this.stationProfiles.slice(0).sort((a, b) => a.priority - b.priority);
-
-    return profiles.map((profile) => {
-      const rawPredictions = groupedPredictions[profile.code] || [];
-      const predictions = this.filterAndDecoratePredictions(rawPredictions, profile, incidents, now);
-      const groupedByLine = this.groupPredictionsByLine(predictions);
-      const alerts = this.collectAlerts(predictions, incidents, profile);
-      const condition = this.buildConditionSummary(predictions, incidents, weather, now);
-
-      return {
-        code: profile.code,
-        name: this.stationMap[profile.code] || profile.code,
-        displayName: profile.name || this.stationMap[profile.code] || profile.code,
-        profile,
-        predictions,
-        groupedPredictions: groupedByLine,
-        nextSummary: predictions.slice(0, parseNumber(this.config.summaryCount, 3)),
-        alerts,
-        conditionText: condition.text,
-        conditionClass: condition.className
-      };
-    });
-  },
-
-  filterAndDecoratePredictions(predictions, profile, incidents, now) {
-    const incidentLines = this.collectIncidentLines(incidents);
-
-    return predictions
-      .filter((item) => this.matchesLineFilter(item.line, profile.lineFilter))
-      .filter((item) => this.matchesDestinationFilter(item.destination, profile.destinationIncludes))
-      .map((item) => this.decoratePrediction(item, incidentLines, now));
-  },
-
-  decoratePrediction(prediction, incidentLines, now) {
-    const status = this.classifyPrediction(prediction, incidentLines);
-    const carsClass = this.classifyCars(prediction.cars);
-
-    return {
-      line: prediction.line || "NA",
-      destination: prediction.destination || "Unknown",
-      direction: prediction.direction || "-",
-      displayMinutes: prediction.displayMinutes,
-      minutesSort: prediction.minutesSort,
-      cars: prediction.cars || "",
-      carsLabel: this.formatCars(prediction.cars),
-      carsClass,
-      statusClass: status.className,
-      statusLabel: status.label,
-      alerts: prediction.alerts || [],
-      isStale: now - (prediction.fetchedAt || now) > this.config.staleAfterSeconds * 1000
-    };
-  },
-
-  classifyPrediction(prediction, incidentLines) {
-    const line = String(prediction.line || "").toUpperCase();
-    const matchedIncident = incidentLines[line] || null;
-
-    if (matchedIncident && matchedIncident.rank >= 3) {
-      return { className: "alert", label: "Alert" };
-    }
-
-    if (prediction.displayMinutes === "Boarding") {
-      return { className: "boarding", label: "Boarding" };
-    }
-
-    if (prediction.displayMinutes === "Arriving") {
-      return { className: "arriving", label: "Arriving" };
-    }
-
-    if (prediction.minutesSort >= 15) {
-      return { className: "delayed", label: "Delayed" };
-    }
-
-    if (prediction.minutesSort >= 8) {
-      return { className: "watch", label: "Watch" };
-    }
-
-    return { className: "normal", label: "On time" };
-  },
-
-  classifyCars(cars) {
-    const numeric = Number(String(cars || "").replace(/[^0-9]/g, ""));
-    if (!Number.isFinite(numeric)) {
-      return "dcmetro__cars--unknown";
-    }
-
-    if (numeric >= 8) {
-      return "dcmetro__cars--high";
-    }
-
-    if (numeric >= 6) {
-      return "dcmetro__cars--medium";
-    }
-
-    return "dcmetro__cars--low";
-  },
-
-  formatCars(cars) {
-    const raw = String(cars || "").trim();
-    if (!raw) {
-      return "-";
-    }
-
-    if (/[^0-9]/.test(raw)) {
-      return raw;
-    }
-
-    return `${raw} cars`;
-  },
-
-  collectAlerts(predictions, incidents, profile) {
-    const alerts = [];
-    const alertRules = normalizeList(profile.alerts || this.config.alertRules);
-
-    alertRules.forEach((rule) => {
-      if (typeof rule !== "string") {
-        return;
-      }
-
-      const ruleText = rule.toLowerCase();
-      const hit = predictions.some((prediction) => {
-        const haystack = `${prediction.line} ${prediction.destination} ${prediction.displayMinutes}`.toLowerCase();
-        return haystack.includes(ruleText);
-      }) || incidents.some((incident) => `${incident.linesText} ${incident.description}`.toLowerCase().includes(ruleText));
-
-      if (hit) {
-        alerts.push({
-          severity: "major",
-          message: `Alert: ${rule}`
-        });
-      }
-    });
-
-    predictions.forEach((prediction) => {
-      prediction.alerts = alerts;
-    });
-
-    return alerts;
-  },
-
-  buildConditionSummary(predictions, incidents, weather, now) {
-    const freshness = this.getFreshnessState(this.dataState.fetchedAt || now);
-    const criticalIncidents = incidents.filter((incident) => this.matchesSeverityFilter(incident.severity));
-    const delayedTrains = predictions.filter((prediction) => prediction.statusClass === "delayed" || prediction.statusClass === "alert");
-
-    if (weather && this.config.showWeather) {
-      return {
-        text: `${criticalIncidents.length ? `${criticalIncidents.length} alert${criticalIncidents.length === 1 ? "" : "s"}` : "Service normal"} • ${this.formatWeather(weather)}`,
-        className: weather.isDay === 0 ? "dcmetro__condition--night" : "dcmetro__condition--weather"
-      };
-    }
-
-    if (criticalIncidents.length) {
-      return {
-        text: `${criticalIncidents.length} service alert${criticalIncidents.length === 1 ? "" : "s"}${delayedTrains.length ? ` • ${delayedTrains.length} delayed train${delayedTrains.length === 1 ? "" : "s"}` : ""}`,
-        className: "dcmetro__condition--alert"
-      };
-    }
-
-    if (delayedTrains.length) {
-      return {
-        text: `${delayedTrains.length} train${delayedTrains.length === 1 ? "" : "s"} delayed`,
-        className: "dcmetro__condition--delayed"
-      };
-    }
-
-    return {
-      text: freshness.isStale ? `Data stale ${this.relativeTime(this.dataState.fetchedAt || now)}` : "Service normal",
-      className: freshness.isStale ? "dcmetro__condition--stale" : "dcmetro__condition--normal"
-    };
-  },
-
-  collectIncidentLines(incidents) {
-    const map = {};
-
-    incidents.forEach((incident) => {
-      incident.lineCodes.forEach((line) => {
-        const key = String(line || "").toUpperCase();
-        const existing = map[key];
-        if (!existing || incident.rank > existing.rank) {
-          map[key] = incident;
-        }
-      });
-    });
-
-    return map;
-  },
-
-  matchesLineFilter(line, lineFilter) {
-    const filter = normalizeList(lineFilter);
-    if (!filter.length) {
-      return true;
-    }
-
-    return filter.map((entry) => entry.toUpperCase()).includes(String(line || "").toUpperCase());
-  },
-
-  matchesDestinationFilter(destination, destinationIncludes) {
-    const includes = normalizeList(destinationIncludes);
-    if (!includes.length) {
-      return true;
-    }
-
-    const needle = String(destination || "").toLowerCase();
-    return includes.some((entry) => needle.includes(entry.toLowerCase()));
-  },
-
   matchesSeverityFilter(severity) {
-    const filter = String(this.config.incidentSeverityFilter || "all").toLowerCase();
-    const rank = { all: 0, advisory: 1, major: 2, critical: 3 };
-    return (rank[String(severity || "advisory").toLowerCase()] || 1) >= (rank[filter] || 0);
+    const filter = this.getConfigString("incidentSeverityFilter", "all");
+    return (SEVERITY_RANK[String(severity || "advisory").toLowerCase()] || 1) >= (SEVERITY_RANK[filter] || 0);
+  },
+
+  getConfigBool(key, fallback) {
+    return parseBoolean(this.config[key], fallback);
+  },
+
+  getConfigValue(key, fallback) {
+    return this.config[key] != null ? this.config[key] : fallback;
+  },
+
+  getConfigString(key, fallback) {
+    return String(this.config[key] || fallback || "").toLowerCase();
+  },
+
+  getConfigNumber(key, fallback) {
+    return parseNumber(this.config[key], fallback);
+  },
+
+  isCriticalSeverity(severity) {
+    return normalizeLowercase(severity, "") === "critical";
+  },
+
+  extractFreshness(timestamp) {
+    return this.getFreshnessState(timestamp);
   },
 
   formatWeather(weather) {
-    const temperature = Math.round(Number(weather.temperature));
-    const summary = weatherSummary(weather.weathercode);
-    return `${Number.isFinite(temperature) ? `${temperature}°F` : "Weather"} ${summary}`.trim();
+    return formatWeatherDisplay(weather);
   },
 
   getFreshnessState(timestamp) {
-    const ageSeconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
     return {
-      ageSeconds,
-      isStale: ageSeconds > this.config.staleAfterSeconds
+      isStale: (Date.now() - timestamp) > this.config.staleAfterSeconds * 1000
     };
   },
 
@@ -1361,16 +1053,8 @@ Module.register("MMM-DCMetroTrains", {
       return false;
     }
 
-    const schedule = this.config.commuteSchedule || {};
     const now = new Date();
-    const day = now.getDay();
-    const isWeekend = day === 0 || day === 6;
-
-    const normalizedWindows = Array.isArray(isWeekend ? schedule.weekends : schedule.weekdays)
-      ? (isWeekend ? schedule.weekends : schedule.weekdays)
-      : [];
-
-    return normalizedWindows.some((window) => this.matchesWindow(now, window));
+    return this.matchesAnyWindow(now, this.config.commuteSchedule || {});
   },
 
   matchesWindow(now, window) {
@@ -1386,19 +1070,6 @@ Module.register("MMM-DCMetroTrains", {
 
     const currentMinutes = now.getHours() * 60 + now.getMinutes();
     return currentMinutes >= start && currentMinutes <= end;
-  },
-
-  classifyIncident(description) {
-    const text = String(description || "").toLowerCase();
-    if (/suspend|suspended|no service|shutdown|evacuat|fire|police|disabled|track work|bus bridge|major delay/.test(text)) {
-      return { rank: 3, severity: "critical", severityLabel: "Critical" };
-    }
-
-    if (/delay|delayed|single track|slow|minor|construction|maintenance/.test(text)) {
-      return { rank: 2, severity: "major", severityLabel: "Major" };
-    }
-
-    return { rank: 1, severity: "advisory", severityLabel: "Advisory" };
   },
 
   relativeTime(timestamp) {
