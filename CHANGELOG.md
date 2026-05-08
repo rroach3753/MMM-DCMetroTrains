@@ -34,22 +34,6 @@ The format is based on Keep a Changelog.
 - **Architecture**: Enhanced helper infrastructure with comprehensive abstraction covering array operations, CSS class building, config access, data filtering, element creation patterns, table cell rendering, forecast display, status classification, and scroll duration formatting.
 - README now matches runtime behavior for validation constraints and includes `incidentScrollSpeedMin` in examples/options.
 
-## [1.1.0] - 2026-04-28
-
-Note: This release cycle included a short-lived first/last-train feature experiment that was added and then removed within the same version progression.
-
-### Added
-- Optional first and last train of the day display via `showFirstLastTrains` configuration option (defaults to off).
-- Multi-platform station support for first/last trains with `firstLastTrainMode` option to show `"filtered"` (default) or `"all"` lines.
-- Daily caching of WMATA station service time data per WMATA API recommendations to reduce request load.
-- Separate styled summary block showing northbound and southbound first and last train times, rendered above the main arrivals table.
-- Per-station configuration overrides for `showFirstLastTrains` and `firstLastTrainMode` to customize behavior per station.
-
-### Removed
-- Removed first and last train of the day display feature and associated WMATA station service time caching.
-- Removed `showFirstLastTrains` and `firstLastTrainMode` configuration options.
-- Removed related UI components for first/last train summary display.
-
 ## [1.0.7] - 2026-04-28
 
 ### Removed
