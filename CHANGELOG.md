@@ -6,6 +6,16 @@ The format is based on Keep a Changelog.
 
 ## [Unreleased]
 
+### Removed
+- Removed the optional weather feature from both frontend rendering and backend fetch logic.
+- Removed weather-related configuration options (`showWeather`, `weatherLatitude`, `weatherLongitude`) and corresponding README documentation.
+
+### Security
+- Added instance-scoped socket payload handling (`instanceId`) to reduce cross-instance data bleed in multi-instance MagicMirror deployments.
+
+### Fixed
+- Added explicit WMATA request timeout handling in the shared JSON helper to avoid indefinite hangs on stalled upstream calls.
+
 ## [1.0.8] - 2026-05-08
 
 ### Fixed

@@ -115,12 +115,6 @@ function createPredictionGroups(predictions, lineOrder, getLineWeightFn) {
     }));
 }
 
-function formatWeatherDisplay(weather) {
-  const temperature = Math.round(Number(weather.temperature));
-  const summary = weatherSummary(weather.weathercode);
-  return `${Number.isFinite(temperature) ? `${temperature}°F` : "Weather"} ${summary}`.trim();
-}
-
 function normalizeLineOrderToUpperCase(lineOrder) {
   return normalizeList(lineOrder).map((entry) => entry.toUpperCase());
 }
@@ -153,7 +147,6 @@ module.exports = NodeHelper.create({
     this.retryTimer = null;
     this.stationMap = {};
     this.latestIncidents = [];
-    this.latestWeather = null;
     this.latestStations = [];
     this.latestBusStops = [];
     this.stationProfiles = [];
@@ -229,9 +222,13 @@ module.exports = NodeHelper.create({
     }
 
     this.config = payload || {};
+    this.instanceId = this.config.instanceId || null;
 
     if (!this.validateConfig()) {
-      this.sendSocketNotification("DC_METRO_ERROR", "Invalid MMM-DCMetroTrains configuration. Check server logs for details.");
+      this.sendSocketNotification("DC_METRO_ERROR", {
+        instanceId: this.instanceId,
+        error: "Invalid MMM-DCMetroTrains configuration. Check server logs for details."
+      });
       return;
     }
 
@@ -312,16 +309,19 @@ module.exports = NodeHelper.create({
   },
 
   reportError(message) {
-    this.sendSocketNotification("DC_METRO_ERROR", message);
+    this.sendSocketNotification("DC_METRO_ERROR", {
+      instanceId: this.instanceId,
+      error: message
+    });
   },
 
   broadcastData() {
     this.lastBroadcastAt = Date.now();
     this.sendSocketNotification("DC_METRO_DATA", {
+      instanceId: this.instanceId,
       stations: this.latestStations,
       busStops: this.latestBusStops,
       incidents: this.latestIncidents,
-      weather: this.latestWeather,
       fetchedAt: this.lastBroadcastAt
     });
   },
@@ -329,18 +329,16 @@ module.exports = NodeHelper.create({
   async refreshPredictionsAndWeather() {
     try {
       const metroBusOnly = this.isMetroBusOnlyMode();
-      const [predictions, weather, busStops] = await Promise.all([
+      const [predictions, busStops] = await Promise.all([
         metroBusOnly ? Promise.resolve([]) : this.fetchPredictions(),
-        metroBusOnly ? Promise.resolve(null) : this.fetchWeather(),
         this.fetchMetroBusPredictions()
       ]);
 
       // Build complete data set before updating module state (atomic update)
       const grouped = this.groupPredictionsByStation(predictions);
-      const newStations = metroBusOnly ? [] : this.buildStationPayload(grouped, this.latestIncidents, weather);
+      const newStations = metroBusOnly ? [] : this.buildStationPayload(grouped, this.latestIncidents);
 
       // Update state atomically
-      this.latestWeather = weather;
       this.latestBusStops = busStops;
       this.latestStations = newStations;
       this.broadcastData();
@@ -438,34 +436,6 @@ module.exports = NodeHelper.create({
         rank: severity.rank
       };
     });
-  },
-
-  async fetchWeather() {
-    const latitude = this.getConfigNumber("weatherLatitude", null);
-    const longitude = this.getConfigNumber("weatherLongitude", null);
-
-    if (!this.config.showWeather || latitude == null || longitude == null) {
-      return null;
-    }
-
-    if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
-      console.warn("[MMM-DCMetroTrains] Invalid weather coordinates: latitude must be between -90 and 90, longitude between -180 and 180.");
-      return null;
-    }
-
-    const url = `https://api.open-meteo.com/v1/forecast?latitude=${encodeURIComponent(latitude)}&longitude=${encodeURIComponent(longitude)}&current_weather=true&temperature_unit=fahrenheit&wind_speed_unit=mph&timezone=auto`;
-    const response = await this.getJson(url);
-    const weather = response.current_weather || null;
-
-    if (!weather) {
-      return null;
-    }
-
-    return {
-      temperature: weather.temperature,
-      weathercode: weather.weathercode,
-      isDay: weather.is_day
-    };
   },
 
   resolveMetroBusStopProfiles() {
@@ -651,14 +621,14 @@ module.exports = NodeHelper.create({
     return grouped;
   },
 
-  buildStationPayload(grouped, incidents, weather) {
+  buildStationPayload(grouped, incidents) {
     const profiles = sortCopy(this.stationProfiles, (a, b) => a.priority - b.priority);
 
     return profiles.map((profile) => {
       const rawPredictions = grouped[profile.code] || [];
       const predictions = this.filterAndDecoratePredictions(rawPredictions, profile, incidents);
       const alerts = this.collectAlerts(predictions, incidents, profile);
-      const condition = this.buildConditionSummary(predictions, incidents, weather);
+      const condition = this.buildConditionSummary(predictions, incidents);
 
       return {
         code: profile.code,
@@ -800,19 +770,12 @@ module.exports = NodeHelper.create({
     return alerts;
   },
 
-  buildConditionSummary(predictions, incidents, weather) {
+  buildConditionSummary(predictions, incidents) {
     const freshness = this.getFreshnessState(this.lastBroadcastAt || Date.now());
     const safePredictions = ensureArray(predictions);
     const safeIncidents = ensureArray(incidents);
     const activeIncidents = safeIncidents.filter((incident) => this.matchesSeverityFilter(incident.severity));
     const delayedTrains = safePredictions.filter((prediction) => this.predictionsAreDamaged(prediction));
-
-    if (weather && this.config.showWeather) {
-      return {
-        text: `${activeIncidents.length ? pluralize(activeIncidents.length, "alert") : "Service normal"} • ${this.formatWeather(weather)}`,
-        className: weather.isDay === 0 ? "dcmetro__condition--night" : "dcmetro__condition--weather"
-      };
-    }
 
     if (activeIncidents.length) {
       return {
@@ -990,10 +953,6 @@ module.exports = NodeHelper.create({
     return { rank: 1, severity: "advisory", severityLabel: "Advisory" };
   },
 
-  formatWeather(weather) {
-    return formatWeatherDisplay(weather);
-  },
-
   getConfigBool(key, fallback) {
     return parseBoolean(this.config[key], fallback);
   },
@@ -1054,6 +1013,10 @@ module.exports = NodeHelper.create({
             reject(new Error(`Failed parsing WMATA response: ${error.message}`));
           }
         });
+      });
+
+      request.setTimeout(15000, () => {
+        request.destroy(new Error("WMATA request timed out after 15000ms"));
       });
 
       request.on("error", (error) => reject(error));

@@ -22,7 +22,6 @@ A full-featured [MagicMirror²](https://github.com/MagicMirrorOrg/MagicMirror) m
 - Custom line order, station title formatting, and configurable thresholds
 - Debug overlay and custom fallback messages
 - Optional MetroBus stop predictions section
-- Optional weather row when coordinates are provided
 - Automatic retries when the API fails
 
 Current npm/package version is `1.0.8`. Ongoing hardening and documentation refinements are tracked under `Unreleased` in [CHANGELOG.md](CHANGELOG.md).
@@ -168,9 +167,6 @@ Add this to your `config/config.js` file:
     ],
     metroBusMaxRows: 5,
     metroBusRouteFilter: [],
-    showWeather: false,
-    weatherLatitude: null,
-    weatherLongitude: null,
     rotateStations: true,
     groupByLine: true,
     commuteMode: true,
@@ -246,9 +242,6 @@ All other settings are optional and fall back to the defaults shown below.
 | `metroBusStops` | Array<String or Object> | No | `[]` | MetroBus stop IDs. Supports string IDs or object entries with `stopId`, `name`, `routeFilter`, `maxRows`, and `priority`. |
 | `metroBusMaxRows` | Number | No | `5` | Maximum buses shown per stop card (unless a stop-level `maxRows` overrides it). |
 | `metroBusRouteFilter` | Array<String> | No | `[]` | Global MetroBus route filter; empty means all routes. |
-| `showWeather` | Boolean | No | `false` | Shows or hides the weather summary row when latitude and longitude are provided. |
-| `weatherLatitude` | Number | No | `null` | Latitude used for optional weather lookup. |
-| `weatherLongitude` | Number | No | `null` | Longitude used for optional weather lookup. |
 | `staleAfterSeconds` | Number | No | `180` | Time threshold used to mark the feed as stale in the freshness indicators. |
 | `rotateStations` | Boolean | No | `true` | Enables station rotation when more than one station is configured. |
 | `groupByLine` | Boolean | No | `true` | Groups arrivals by rail line instead of showing one flat table. |

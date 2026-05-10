@@ -133,46 +133,6 @@ function isNotEmpty(array) {
 
 const NA_LINE = "NA";
 
-function weatherSummary(code) {
-  const numeric = Number(code);
-
-  if (numeric === 0) {
-    return "Clear";
-  }
-  if (numeric === 1) {
-    return "Mostly clear";
-  }
-  if (numeric === 2) {
-    return "Partly cloudy";
-  }
-  if (numeric === 3) {
-    return "Cloudy";
-  }
-  if (numeric === 45 || numeric === 48) {
-    return "Fog";
-  }
-  if (numeric >= 51 && numeric <= 67) {
-    return "Rain";
-  }
-  if (numeric >= 71 && numeric <= 77) {
-    return "Snow";
-  }
-  if (numeric >= 80 && numeric <= 82) {
-    return "Showers";
-  }
-  if (numeric >= 95) {
-    return "Thunderstorms";
-  }
-
-  return "Weather";
-}
-
-function formatWeatherDisplay(weather) {
-  const temperature = Math.round(Number(weather.temperature));
-  const summary = weatherSummary(weather.weathercode);
-  return `${Number.isFinite(temperature) ? `${temperature}°F` : "Weather"} ${summary}`.trim();
-}
-
 function makeDiv(className, text) {
   return makeEl("div", className, text);
 }
@@ -306,9 +266,6 @@ Module.register("MMM-DCMetroTrains", {
     metroBusStops: [],
     metroBusMaxRows: 5,
     metroBusRouteFilter: [],
-    showWeather: false,
-    weatherLatitude: null,
-    weatherLongitude: null,
     staleAfterSeconds: 180,
     rotateStations: true,
     groupByLine: true,
@@ -327,11 +284,11 @@ Module.register("MMM-DCMetroTrains", {
   },
 
   start() {
+    this.instanceId = this.identifier || this.name;
     this.dataState = {
       stations: [],
       busStops: [],
       incidents: [],
-      weather: null,
       fetchedAt: null,
       error: null,
       errorAt: null
@@ -341,7 +298,10 @@ Module.register("MMM-DCMetroTrains", {
     this.retryTimer = null;
     this.loaded = false;
 
-    this.sendSocketNotification("DC_METRO_CONFIG", this.config);
+    this.sendSocketNotification("DC_METRO_CONFIG", {
+      ...this.config,
+      instanceId: this.instanceId
+    });
     this.startRotation();
   },
 
@@ -453,10 +413,6 @@ Module.register("MMM-DCMetroTrains", {
     return head;
   },
 
-  shouldShowWeather() {
-    return parseBoolean(this.config.showWeather, false) && this.dataState.weather;
-  },
-
   buildSummaryChip(labelText, valueText, extraClass) {
     const chip = makeEl("div", classNames("dcmetro__summaryChip", extraClass));
     chip.appendChild(makeEl("span", "dcmetro__summaryLabel", labelText));
@@ -486,10 +442,6 @@ Module.register("MMM-DCMetroTrains", {
 
     if (isCommuteTime && !isQuietHours) {
       summary.appendChild(this.buildSummaryChip("Commute", isCompact ? "Compact mode" : "Peak window", isCompact ? "dcmetro__summaryChip--compact" : null));
-    }
-
-    if (this.shouldShowWeather() && !isQuietHours) {
-      summary.appendChild(this.buildSummaryChip("Weather", this.formatWeather(this.dataState.weather)));
     }
 
     return summary.childNodes.length ? summary : null;
@@ -546,10 +498,6 @@ Module.register("MMM-DCMetroTrains", {
     const conditionText = station.conditionText || "Unknown status";
     const conditionClass = station.conditionClass || "dcmetro__condition--normal";
     conditions.appendChild(makeEl("div", classNames("dcmetro__condition", conditionClass), conditionText));
-
-    if (this.shouldShowWeather()) {
-      conditions.appendChild(makeEl("div", "dcmetro__condition dcmetro__condition--weather", this.formatWeather(this.dataState.weather)));
-    }
 
     return conditions;
   },
@@ -789,14 +737,19 @@ Module.register("MMM-DCMetroTrains", {
   },
 
   socketNotificationReceived(notification, payload) {
+    const data = payload || {};
+
+    if (data.instanceId && data.instanceId !== this.instanceId) {
+      return;
+    }
+
     if (notification === "DC_METRO_DATA") {
       this.loaded = true;
       this.dataState = {
-        stations: payload.stations || [],
-        busStops: payload.busStops || [],
-        incidents: payload.incidents || [],
-        weather: payload.weather || null,
-        fetchedAt: payload.fetchedAt || Date.now(),
+        stations: data.stations || [],
+        busStops: data.busStops || [],
+        incidents: data.incidents || [],
+        fetchedAt: data.fetchedAt || Date.now(),
         error: null,
         errorAt: null
       };
@@ -811,7 +764,7 @@ Module.register("MMM-DCMetroTrains", {
 
     if (notification === "DC_METRO_ERROR") {
       this.loaded = true;
-      this.dataState.error = payload || "Unable to load Metro train data.";
+      this.dataState.error = (data && data.error) || payload || "Unable to load Metro train data.";
       this.dataState.errorAt = Date.now();
       this.updateDom(this.config.animationSpeed);
     }
@@ -1036,10 +989,6 @@ Module.register("MMM-DCMetroTrains", {
 
   extractFreshness(timestamp) {
     return this.getFreshnessState(timestamp);
-  },
-
-  formatWeather(weather) {
-    return formatWeatherDisplay(weather);
   },
 
   getFreshnessState(timestamp) {
