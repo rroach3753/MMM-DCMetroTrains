@@ -133,14 +133,6 @@ function isNotEmpty(array) {
 
 const NA_LINE = "NA";
 
-function makeDiv(className, text) {
-  return makeEl("div", className, text);
-}
-
-function makeSpan(className, text) {
-  return makeEl("span", className, text);
-}
-
 function normalizeLineOrderToUpperCase(lineOrder) {
   return normalizeList(lineOrder).map((entry) => entry.toUpperCase());
 }
@@ -175,25 +167,8 @@ function getRowAlertClass(alerts) {
   return isNotEmpty(alerts) ? "dcmetro__row--alert" : "";
 }
 
-function buildTableCell(className, content) {
-  return makeEl("td", className, content);
-}
-
 function buildForecastChip(prediction) {
   return makeEl("span", classNames("dcmetro__forecastChip", `dcmetro__forecastChip--${prediction.statusClass}`), `${prediction.line} ${prediction.destination} ${prediction.displayMinutes}`);
-}
-
-function buildIncidentItem(incident, includeDescription) {
-  const item = makeEl("div", classNames("dcmetro__incident", getClassForSeverity(incident.severity)));
-  item.appendChild(makeEl("span", classNames("dcmetro__incidentSeverity", getClassForSeverity(incident.severity)), incident.severityLabel));
-  item.appendChild(makeEl("span", "dcmetro__incidentLine", incident.affectedLines));
-  if (includeDescription) {
-    item.appendChild(makeEl("span", "dcmetro__incidentText", incident.description));
-  }
-  if (incident.dateRangeText) {
-    item.appendChild(makeEl("span", "dcmetro__incidentRange", incident.dateRangeText));
-  }
-  return item;
 }
 
 function limitArray(array, maxLength) {

@@ -50,20 +50,12 @@ function parseBoolean(value, fallback) {
   return Boolean(value);
 }
 
-function lineSortWeight(lineCode) {
-  return LINE_ORDER[String(lineCode || "NA").toUpperCase()] || 90;
-}
-
 function pluralize(count, word) {
   return `${count} ${word}${count === 1 ? "" : "s"}`;
 }
 
 function ensureArray(value) {
   return Array.isArray(value) ? value : [];
-}
-
-function safeString(value) {
-  return String(value || "").trim();
 }
 
 function limitArray(array, maxLength) {
@@ -125,10 +117,6 @@ function normalizeLowercase(value, fallback) {
 
 function isEmpty(array) {
   return !array || !array.length;
-}
-
-function isNotEmpty(array) {
-  return array && array.length > 0;
 }
 
 const NA_LINE = "NA";
