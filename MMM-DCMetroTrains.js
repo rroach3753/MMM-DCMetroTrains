@@ -178,6 +178,13 @@ function limitArray(array, maxLength) {
 function getScrollDuration(configSpeed, minSpeed = 8) {
   return `${Math.max(minSpeed, configSpeed)}s`;
 }
+
+function formatCountdown(msRemaining) {
+  const totalSeconds = Math.max(0, Math.ceil(msRemaining / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
 Module.register("MMM-DCMetroTrains", {
   defaults: {
     apiKey: "",
@@ -270,15 +277,19 @@ Module.register("MMM-DCMetroTrains", {
     };
     this.currentStationIndex = 0;
     this.rotationTimer = null;
+    this.uiTickTimer = null;
     this.retryTimer = null;
     this.loaded = false;
     this.hasRenderedData = false;
+    this.lastRotationAt = Date.now();
+    this.lastRefreshAt = null;
 
     this.sendSocketNotification("DC_METRO_CONFIG", {
       ...this.config,
       instanceId: this.instanceId
     });
     this.startRotation();
+    this.startUiTicker();
   },
 
   stop() {
@@ -290,6 +301,11 @@ Module.register("MMM-DCMetroTrains", {
     if (this.retryTimer) {
       clearTimeout(this.retryTimer);
       this.retryTimer = null;
+    }
+
+    if (this.uiTickTimer) {
+      clearInterval(this.uiTickTimer);
+      this.uiTickTimer = null;
     }
   },
 
@@ -414,6 +430,8 @@ Module.register("MMM-DCMetroTrains", {
 
     if (this.config.showFreshnessChip && this.dataState.fetchedAt) {
       summary.appendChild(this.buildSummaryChip(freshness.isStale ? "Stale" : "Fresh", this.relativeTime(this.dataState.fetchedAt), freshness.isStale ? "dcmetro__summaryChip--stale" : null));
+      summary.appendChild(this.buildSummaryChip("Next station", this.getNextStationCountdownText()));
+      summary.appendChild(this.buildSummaryChip("Refresh", this.getNextRefreshCountdownText()));
     }
 
     if (isCommuteTime && !isQuietHours) {
@@ -698,6 +716,8 @@ Module.register("MMM-DCMetroTrains", {
       return;
     }
 
+    this.lastRotationAt = Date.now();
+
     this.rotationTimer = setInterval(() => {
       const stationPool = this.config.hideWhenNoTrains
         ? this.dataState.stations.filter((station) => isNotEmpty(ensureArray(station.predictions)))
@@ -708,9 +728,29 @@ Module.register("MMM-DCMetroTrains", {
       }
 
       this.currentStationIndex = (this.currentStationIndex + 1) % stationPool.length;
+      this.lastRotationAt = Date.now();
       this.updateDom(this.hasRenderedData ? 0 : this.config.animationSpeed);
       this.hasRenderedData = true;
     }, this.config.stationRotationInterval);
+  },
+
+  startUiTicker() {
+    if (this.uiTickTimer) {
+      clearInterval(this.uiTickTimer);
+      this.uiTickTimer = null;
+    }
+
+    this.uiTickTimer = setInterval(() => {
+      if (!this.loaded || this.isErrorRecent()) {
+        return;
+      }
+
+      if (!this.config.showFreshnessChip) {
+        return;
+      }
+
+      this.updateDom(0);
+    }, 1000);
   },
 
   socketNotificationReceived(notification, payload) {
@@ -734,6 +774,8 @@ Module.register("MMM-DCMetroTrains", {
       if (this.currentStationIndex >= this.dataState.stations.length) {
         this.currentStationIndex = 0;
       }
+
+      this.lastRefreshAt = this.dataState.fetchedAt;
 
       this.updateDom(this.hasRenderedData ? 0 : this.config.animationSpeed);
       this.hasRenderedData = true;
@@ -1014,5 +1056,35 @@ Module.register("MMM-DCMetroTrains", {
     }
     const hours = Math.floor(minutes / 60);
     return `${hours}h ago`;
+  },
+
+  getNextStationCountdownText() {
+    if (!this.config.rotateStations || this.config.stationRotationInterval < 2000) {
+      return "off";
+    }
+
+    const stationPool = this.config.hideWhenNoTrains
+      ? this.dataState.stations.filter((station) => isNotEmpty(ensureArray(station.predictions)))
+      : this.dataState.stations;
+
+    if (stationPool.length < 2) {
+      return "--";
+    }
+
+    const rotationInterval = this.getConfigNumber("stationRotationInterval", 20000);
+    const elapsed = Date.now() - (this.lastRotationAt || Date.now());
+    return formatCountdown(rotationInterval - elapsed);
+  },
+
+  getNextRefreshCountdownText() {
+    const refreshInterval = Math.max(5000, this.getConfigNumber("refreshInterval", 30000));
+    const baseline = this.lastRefreshAt || this.dataState.fetchedAt;
+
+    if (!baseline) {
+      return "--";
+    }
+
+    const elapsed = Date.now() - baseline;
+    return formatCountdown(refreshInterval - elapsed);
   }
 });

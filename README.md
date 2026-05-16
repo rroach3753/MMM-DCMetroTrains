@@ -17,6 +17,7 @@ A full-featured [MagicMirror²](https://github.com/MagicMirrorOrg/MagicMirror) m
 - Optional incident ticker scrolling and row caps
 - Active Metro service incidents panel
 - Freshness indicators and relative "last updated" timestamp
+- Live countdown chips for next station rotation and next data refresh
 - Refreshes and station rotation update in place after the first render without flashing the module
 - Commute / peak-hour compact mode
 - Quiet-hours mode for lower-motion overnight display
@@ -230,7 +231,7 @@ All other settings are optional and fall back to the defaults shown below.
 | `showBackground` | Boolean | No | `true` | Shows or hides translucent panel backgrounds behind the module and cards. |
 | `showConditions` | Boolean | No | `true` | Shows or hides the transit conditions row. |
 | `showLastUpdated` | Boolean | No | `true` | Shows or hides relative "updated x ago" timestamp. |
-| `showFreshnessChip` | Boolean | No | `true` | Shows or hides the top summary chip labeled `Fresh` or `Stale`. |
+| `showFreshnessChip` | Boolean | No | `true` | Shows or hides top summary chips for freshness plus countdowns (`Next station`, `Refresh`). |
 | `showCars` | Boolean | No | `true` | Shows or hides the train car-count column. Car badges are color-coded by train length. |
 | `showCarHighlights` | Boolean | No | `false` | Switches car badges to the older filled highlight-style format instead of the WMATA color palette. |
 | `showDirection` | Boolean | No | `true` | Shows or hides the direction column (northbound/southbound). |
@@ -377,7 +378,7 @@ These options change the visual treatment rather than the data:
 - `showBorders`: removes module/card outlines when set to `false`.
 - `showBackground`: removes the translucent panel backgrounds when set to `false`.
 - `fontScale`: scales the whole module text size.
-- `showFreshnessChip`: hides the top freshness chip.
+- `showFreshnessChip`: hides the top freshness/countdown chips.
 - `showLastUpdated`: hides the bottom relative timestamp.
 
 Useful combinations:
