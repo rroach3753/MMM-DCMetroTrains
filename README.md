@@ -17,6 +17,7 @@ A full-featured [MagicMirror²](https://github.com/MagicMirrorOrg/MagicMirror) m
 - Optional incident ticker scrolling and row caps
 - Active Metro service incidents panel
 - Freshness indicators and relative "last updated" timestamp
+- Refreshes and station rotation update in place after the first render without flashing the module
 - Commute / peak-hour compact mode
 - Quiet-hours mode for lower-motion overnight display
 - Custom line order, station title formatting, and configurable thresholds

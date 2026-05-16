@@ -272,6 +272,7 @@ Module.register("MMM-DCMetroTrains", {
     this.rotationTimer = null;
     this.retryTimer = null;
     this.loaded = false;
+    this.hasRenderedData = false;
 
     this.sendSocketNotification("DC_METRO_CONFIG", {
       ...this.config,
@@ -707,7 +708,8 @@ Module.register("MMM-DCMetroTrains", {
       }
 
       this.currentStationIndex = (this.currentStationIndex + 1) % stationPool.length;
-      this.updateDom(this.config.animationSpeed);
+      this.updateDom(this.hasRenderedData ? 0 : this.config.animationSpeed);
+      this.hasRenderedData = true;
     }, this.config.stationRotationInterval);
   },
 
@@ -733,7 +735,8 @@ Module.register("MMM-DCMetroTrains", {
         this.currentStationIndex = 0;
       }
 
-      this.updateDom(this.config.animationSpeed);
+      this.updateDom(this.hasRenderedData ? 0 : this.config.animationSpeed);
+      this.hasRenderedData = true;
       return;
     }
 
@@ -741,7 +744,8 @@ Module.register("MMM-DCMetroTrains", {
       this.loaded = true;
       this.dataState.error = (data && data.error) || payload || "Unable to load Metro train data.";
       this.dataState.errorAt = Date.now();
-      this.updateDom(this.config.animationSpeed);
+      this.updateDom(this.hasRenderedData ? 0 : this.config.animationSpeed);
+      this.hasRenderedData = true;
     }
   },
 
