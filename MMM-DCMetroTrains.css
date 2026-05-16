@@ -116,6 +116,7 @@
 .dcmetro__summary {
   display: flex;
   flex-wrap: wrap;
+  justify-content: center;
   gap: 6px;
   margin-bottom: 10px;
 }
@@ -123,6 +124,7 @@
 .dcmetro__summaryChip {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 8px;
   max-width: 100%;
   border: 1px solid var(--metro-border-strong);
@@ -132,6 +134,7 @@
   color: var(--metro-text);
   font-size: 0.7rem;
   line-height: 1.2;
+  text-align: center;
 }
 
 .dcmetro__summaryChip--stale {
