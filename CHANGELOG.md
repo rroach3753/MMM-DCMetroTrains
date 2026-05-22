@@ -4,7 +4,7 @@ All notable changes to this project are documented in this file.
 
 The format is based on Keep a Changelog.
 
-## [2.0.0] - 2026-05-22
+## [3.0.0] - 2026-05-22
 
 ### Upgrade Notes
 - This release formalizes breaking configuration removals introduced during the late 1.x cleanup cycle.

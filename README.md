@@ -30,7 +30,7 @@ A full-featured [MagicMirror²](https://github.com/MagicMirrorOrg/MagicMirror) m
 - Shared helper-side WMATA request cache and persistent last-known-good fallback
 - Exponential retry backoff with degraded-mode status when the API fails
 
-Current npm/package version is `2.0.0`. See [CHANGELOG.md](CHANGELOG.md) for the full release notes and upgrade details.
+Current npm/package version is `3.0.0`. See [CHANGELOG.md](CHANGELOG.md) for the full release notes and upgrade details.
 
 ## Requirements
 
@@ -43,9 +43,9 @@ This module will not function without a valid API key.
 
 See [CHANGELOG.md](CHANGELOG.md) for full release history.
 
-## Upgrade Notes For 2.0.0
+## Upgrade Notes For 3.0.0
 
-Version 2.0.0 formalizes the breaking configuration removals that accumulated during the late 1.x cleanup cycle.
+Version 3.0.0 formalizes the breaking configuration removals that accumulated during the late 1.x cleanup cycle.
 
 If you are upgrading from an earlier 1.x install, remove these deprecated options from your config before restarting MagicMirror:
 
@@ -55,7 +55,7 @@ If you are upgrading from an earlier 1.x install, remove these deprecated option
 - `showFirstLastTrains`
 - `firstLastTrainMode`
 
-No replacement settings are required for those removed options. All other new features in 2.0.0 are additive and can be adopted incrementally.
+No replacement settings are required for those removed options. All other new features in 3.0.0 are additive and can be adopted incrementally.
 
 ## Installation
 
