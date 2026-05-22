@@ -1,0 +1,28 @@
+{
+  "Trains": [
+    {
+      "LocationCode": "A01",
+      "Line": "RD",
+      "DestinationName": "Shady Grove",
+      "Group": "1",
+      "Min": "3",
+      "Car": "8"
+    },
+    {
+      "LocationCode": "A01",
+      "Line": "OR",
+      "DestinationName": "New Carrollton",
+      "Group": "2",
+      "Min": "ARR",
+      "Car": "6"
+    },
+    {
+      "LocationCode": "C01",
+      "Line": "BL",
+      "DestinationName": "Franconia-Springfield",
+      "Group": "2",
+      "Min": "BRD",
+      "Car": "6"
+    }
+  ]
+}

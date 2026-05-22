@@ -294,6 +294,19 @@
   color: #ffd1d1;
 }
 
+.dcmetro__incidentImpact {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 1px 7px;
+  margin-right: 8px;
+  font-size: 0.58rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  background: rgba(0, 166, 81, 0.15);
+  color: #dbf5df;
+}
+
 .dcmetro__forecast {
   display: flex;
   flex-wrap: wrap;
@@ -417,6 +430,20 @@
 .dcmetro__line--bl {
   background: #0083ce;
   color: #fff;
+}
+
+.dcmetro__busRouteBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  border-radius: 8px;
+  padding: 2px 6px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  background: rgba(255, 179, 71, 0.2);
+  border: 1px solid rgba(255, 179, 71, 0.4);
+  color: #ffe6c8;
 }
 
 .dcmetro__line--yl {

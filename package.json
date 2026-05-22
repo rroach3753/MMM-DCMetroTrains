@@ -1,11 +1,12 @@
 {
   "name": "mmm-dcmetrotrains",
-  "version": "1.0.8",
+  "version": "2.0.0",
   "type": "commonjs",
   "description": "MagicMirror module for live Washington DC Metro train predictions and service alerts",
   "main": "node_helper.js",
   "scripts": {
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "node --test"
   },
   "author": "RMR IT Solutions, LLC",
   "license": "MIT",

@@ -225,6 +225,7 @@ Module.register("MMM-DCMetroTrains", {
     },
     blinkOnCritical: false,
     updateJitterMs: 0,
+    enableSharedApiCache: true,
     debugOverlay: false,
     fallbackMessage: "No upcoming trains.",
     fontScale: 1,
@@ -245,10 +246,49 @@ Module.register("MMM-DCMetroTrains", {
     showMetroBus: false,
     metroBusOnlyMode: false,
     showMetroBusHeader: true,
+    metroBusRotateStops: false,
+    metroBusStopRotationInterval: 15000,
     metroBusStops: [],
     metroBusMaxRows: 5,
     metroBusRouteFilter: [],
     staleAfterSeconds: 180,
+    directionMode: "cardinal",
+    activeProfile: "auto",
+    profiles: {
+      workday: {
+        autoCompact: true,
+        compact: false,
+        summaryCount: 3,
+        maxRows: 8
+      },
+      weekend: {
+        autoCompact: false,
+        compact: false,
+        summaryCount: 2,
+        maxRows: 6
+      },
+      event: {
+        autoCompact: false,
+        compact: true,
+        summaryCount: 4,
+        maxRows: 10
+      }
+    },
+    profileSchedule: {
+      workday: {
+        weekdays: [
+          { start: "00:00", end: "23:59" }
+        ],
+        weekends: []
+      },
+      weekend: {
+        weekdays: [],
+        weekends: [
+          { start: "00:00", end: "23:59" }
+        ]
+      },
+      eventDates: []
+    },
     rotateStations: true,
     groupByLine: true,
     commuteMode: true,
@@ -261,6 +301,8 @@ Module.register("MMM-DCMetroTrains", {
     },
     autoCompact: true,
     commuteMaxRows: 5,
+    walkBufferMinutes: 5,
+    leaveNowWindowMinutes: 6,
     compact: false,
     animationSpeed: 1000
   },
@@ -273,22 +315,31 @@ Module.register("MMM-DCMetroTrains", {
       incidents: [],
       fetchedAt: null,
       error: null,
-      errorAt: null
+      errorAt: null,
+      degradedMode: false,
+      retryAttempt: 0,
+      lastSuccessAt: null,
+      lastErrorCode: null
     };
     this.currentStationIndex = 0;
+    this.currentBusStopIndex = 0;
     this.rotationTimer = null;
+    this.busRotationTimer = null;
     this.uiTickTimer = null;
     this.retryTimer = null;
     this.loaded = false;
     this.hasRenderedData = false;
     this.lastRotationAt = Date.now();
+    this.lastBusRotationAt = Date.now();
     this.lastRefreshAt = null;
+    this.liveSummaryNodes = {};
 
     this.sendSocketNotification("DC_METRO_CONFIG", {
       ...this.config,
       instanceId: this.instanceId
     });
     this.startRotation();
+    this.startBusRotation();
     this.startUiTicker();
   },
 
@@ -307,6 +358,11 @@ Module.register("MMM-DCMetroTrains", {
       clearInterval(this.uiTickTimer);
       this.uiTickTimer = null;
     }
+
+    if (this.busRotationTimer) {
+      clearInterval(this.busRotationTimer);
+      this.busRotationTimer = null;
+    }
   },
 
   getStyles() {
@@ -315,10 +371,14 @@ Module.register("MMM-DCMetroTrains", {
 
   getDom() {
     const wrapper = document.createElement("div");
+    this.liveSummaryNodes = {};
+    const profileName = this.getResolvedProfileName();
+    const profileCompact = this.getProfileBool(profileName, "compact", this.config.compact);
+    const profileAutoCompact = this.getProfileBool(profileName, "autoCompact", this.config.autoCompact);
     const isMetroBusOnly = this.isMetroBusOnlyMode();
     const isCommuteTime = this.isCommuteTime();
     const isQuietHours = this.isQuietHours();
-    const isCompact = isMetroBusOnly || this.config.compact || (this.config.autoCompact && isCommuteTime);
+    const isCompact = isMetroBusOnly || profileCompact || (profileAutoCompact && isCommuteTime);
     const showBorders = parseBoolean(this.config.showBorders, true);
     const showBackground = parseBoolean(this.config.showBackground, true);
     const shouldBlinkCritical = this.config.blinkOnCritical && this.hasCriticalIncident();
@@ -352,7 +412,7 @@ Module.register("MMM-DCMetroTrains", {
       return wrapper;
     }
 
-    if (this.isErrorRecent()) {
+    if (this.shouldShowBlockingError()) {
       wrapper.classList.add("bright", "small", "dcmetro__error");
       wrapper.textContent = this.dataState.error;
       return wrapper;
@@ -389,7 +449,13 @@ Module.register("MMM-DCMetroTrains", {
 
     if (this.config.showLastUpdated && this.dataState.fetchedAt) {
       const freshness = this.extractFreshness(this.dataState.fetchedAt);
-      wrapper.appendChild(makeEl("div", classNames("dcmetro__updated xsmall dimmed", getStaleClass(freshness.isStale)), `Updated ${this.relativeTime(this.dataState.fetchedAt)}`));
+      const updated = makeEl("div", classNames("dcmetro__updated xsmall dimmed", getStaleClass(freshness.isStale)));
+      updated.appendChild(makeEl("span", null, "Updated "));
+      const updatedValue = makeEl("span", null, this.relativeTime(this.dataState.fetchedAt));
+      updated.appendChild(updatedValue);
+      this.liveSummaryNodes.updatedContainer = updated;
+      this.liveSummaryNodes.updatedValue = updatedValue;
+      wrapper.appendChild(updated);
     }
 
     return wrapper;
@@ -407,8 +473,12 @@ Module.register("MMM-DCMetroTrains", {
 
   buildSummaryChip(labelText, valueText, extraClass) {
     const chip = makeEl("div", classNames("dcmetro__summaryChip", extraClass));
-    chip.appendChild(makeEl("span", "dcmetro__summaryLabel", labelText));
-    chip.appendChild(makeEl("span", null, valueText));
+    const label = makeEl("span", "dcmetro__summaryLabel", labelText);
+    const value = makeEl("span", null, valueText);
+    chip.appendChild(label);
+    chip.appendChild(value);
+    chip._summaryLabelNode = label;
+    chip._summaryValueNode = value;
     return chip;
   },
 
@@ -420,18 +490,53 @@ Module.register("MMM-DCMetroTrains", {
 
     const summary = makeEl("div", "dcmetro__summary");
     const freshness = this.extractFreshness(this.dataState.fetchedAt);
+    const profileName = this.getResolvedProfileName();
+    const summaryCount = Math.max(1, this.getProfileNumber(profileName, "summaryCount", this.config.summaryCount || 3));
 
     if (this.config.showNextSummary && !isQuietHours) {
       const next = station.nextSummary || [];
       if (next.length) {
-        summary.appendChild(this.buildSummaryChip("Next", next.map((item) => `${item.line} ${item.destination} ${item.displayMinutes}`).join(" • ")));
+        summary.appendChild(this.buildSummaryChip("Next", limitArray(next, summaryCount).map((item) => `${item.line} ${item.destination} ${item.displayMinutes}`).join(" • ")));
       }
     }
 
     if (this.config.showFreshnessChip && this.dataState.fetchedAt) {
-      summary.appendChild(this.buildSummaryChip(freshness.isStale ? "Stale" : "Fresh", this.relativeTime(this.dataState.fetchedAt), freshness.isStale ? "dcmetro__summaryChip--stale" : null));
-      summary.appendChild(this.buildSummaryChip("Next station", this.getNextStationCountdownText()));
-      summary.appendChild(this.buildSummaryChip("Refresh", this.getNextRefreshCountdownText()));
+      const freshnessChip = this.buildSummaryChip(freshness.isStale ? "Stale" : "Fresh", this.relativeTime(this.dataState.fetchedAt), freshness.isStale ? "dcmetro__summaryChip--stale" : null);
+      this.liveSummaryNodes.freshnessChip = freshnessChip;
+      this.liveSummaryNodes.freshnessLabel = freshnessChip._summaryLabelNode;
+      this.liveSummaryNodes.freshnessValue = freshnessChip._summaryValueNode;
+      summary.appendChild(freshnessChip);
+
+      const nextStationChip = this.buildSummaryChip("Next station", this.getNextStationCountdownText());
+      this.liveSummaryNodes.nextStationValue = nextStationChip._summaryValueNode;
+      summary.appendChild(nextStationChip);
+
+      const refreshChip = this.buildSummaryChip("Refresh", this.getNextRefreshCountdownText());
+      this.liveSummaryNodes.refreshValue = refreshChip._summaryValueNode;
+      summary.appendChild(refreshChip);
+
+      if (this.dataState.degradedMode) {
+        const retryText = this.dataState.retryAttempt > 0 ? `retry #${this.dataState.retryAttempt}` : "retrying";
+        summary.appendChild(this.buildSummaryChip("Degraded", retryText, "dcmetro__summaryChip--stale"));
+        summary.appendChild(this.buildSummaryChip("Connection", this.getConnectionStatusText(), "dcmetro__summaryChip--stale"));
+        if (this.dataState.lastSuccessAt) {
+          summary.appendChild(this.buildSummaryChip("Last good", this.relativeTime(this.dataState.lastSuccessAt), "dcmetro__summaryChip--stale"));
+        }
+      }
+    }
+
+    const crowdingText = this.getCrowdingSignalText(station);
+    if (crowdingText) {
+      summary.appendChild(this.buildSummaryChip("Crowding", crowdingText));
+    }
+
+    const leaveNowText = this.getLeaveNowText(station);
+    if (leaveNowText) {
+      summary.appendChild(this.buildSummaryChip("Departure", leaveNowText));
+    }
+
+    if (profileName !== "default") {
+      summary.appendChild(this.buildSummaryChip("Profile", profileName));
     }
 
     if (isCommuteTime && !isQuietHours) {
@@ -470,6 +575,8 @@ Module.register("MMM-DCMetroTrains", {
     const header = makeEl("div", "dcmetro__header");
     header.appendChild(makeEl("div", "dcmetro__station", this.formatStationTitle(station)));
     const meta = makeEl("div", "dcmetro__meta");
+    const profileName = this.getResolvedProfileName();
+    const profileCompact = this.getProfileBool(profileName, "compact", this.config.compact);
 
     if (this.config.showStationCode) {
       meta.appendChild(makeEl("span", "dcmetro__chip", station.code));
@@ -479,7 +586,7 @@ Module.register("MMM-DCMetroTrains", {
       meta.appendChild(makeEl("span", "dcmetro__chip", `${this.currentStationIndex + 1}/${this.dataState.stations.length}`));
     }
 
-    if (station.profile.compact) {
+    if (station.profile.compact || profileCompact) {
       meta.appendChild(makeEl("span", "dcmetro__chip", "Compact"));
     }
 
@@ -620,6 +727,9 @@ Module.register("MMM-DCMetroTrains", {
     limitArray(incidents, this.getMaxIncidentRows()).forEach((incident) => {
       const item = makeEl("div", classNames("dcmetro__incident", getClassForSeverity(incident.severity)));
       item.appendChild(makeEl("span", classNames("dcmetro__incidentSeverity", getClassForSeverity(incident.severity)), incident.severityLabel));
+      if (incident.impactLabel) {
+        item.appendChild(makeEl("span", "dcmetro__incidentImpact", `Impact ${incident.impactLabel}`));
+      }
 
       if (incident.dateRangeText) {
         item.appendChild(makeEl("span", "dcmetro__incidentRange", incident.dateRangeText));
@@ -639,7 +749,7 @@ Module.register("MMM-DCMetroTrains", {
       section.appendChild(makeEl("div", "dcmetro__busHeader", "Metrobus"));
     }
 
-    const stops = ensureArray(this.dataState.busStops);
+    const stops = this.getVisibleBusStops();
     if (isEmpty(stops)) {
       section.appendChild(makeEl("div", "dcmetro__empty dimmed", "No Metrobus stops configured."));
       return section;
@@ -665,10 +775,17 @@ Module.register("MMM-DCMetroTrains", {
     const table = makeEl("table", "dcmetro__table small dcmetro__busTable");
     table.appendChild(this.buildTableHeader(["Route", "Destination", "Min"]));
 
+    const busAlerts = this.getMetroBusAlertsForStop(stop, predictions);
+    if (isNotEmpty(busAlerts)) {
+      card.appendChild(this.buildAlerts(busAlerts, 2));
+    }
+
     const body = makeEl("tbody");
     predictions.forEach((prediction) => {
       const row = makeEl("tr");
-      row.appendChild(makeEl("td", "dcmetro__busRoute", prediction.route || "--"));
+      const routeCell = makeEl("td", "dcmetro__busRoute");
+      routeCell.appendChild(this.buildBusRouteBadge(prediction.route || "--"));
+      row.appendChild(routeCell);
       row.appendChild(makeEl("td", "dcmetro__dest", prediction.destination || "Unknown"));
       row.appendChild(makeEl("td", "dcmetro__eta", prediction.displayMinutes || "--"));
       body.appendChild(row);
@@ -677,6 +794,47 @@ Module.register("MMM-DCMetroTrains", {
     table.appendChild(body);
     card.appendChild(table);
     return card;
+  },
+
+  buildBusRouteBadge(route) {
+    return makeEl("span", "dcmetro__busRouteBadge", route);
+  },
+
+  getMetroBusAlertsForStop(stop, predictions) {
+    const activeIncidents = ensureArray(this.dataState.incidents);
+    if (isEmpty(activeIncidents)) {
+      return [];
+    }
+
+    const routeSet = new Set((stop.routes || predictions.map((item) => item.route)).map((route) => String(route || "").trim()).filter(Boolean));
+
+    return activeIncidents
+      .filter((incident) => {
+        const description = String(incident.description || "").toLowerCase();
+        if (description.includes("bus")) {
+          return true;
+        }
+
+        return [...routeSet].some((route) => description.includes(route.toLowerCase()));
+      })
+      .map((incident) => ({
+        severity: incident.severity || "major",
+        message: `${incident.impactLabel || "Info"}: ${incident.description}`
+      }));
+  },
+
+  getVisibleBusStops() {
+    const stops = ensureArray(this.dataState.busStops);
+    if (isEmpty(stops)) {
+      return [];
+    }
+
+    if (!parseBoolean(this.config.metroBusRotateStops, false) || stops.length < 2) {
+      return stops;
+    }
+
+    const index = this.currentBusStopIndex % stops.length;
+    return [stops[index]];
   },
 
   getVisibleStations() {
@@ -734,6 +892,30 @@ Module.register("MMM-DCMetroTrains", {
     }, this.config.stationRotationInterval);
   },
 
+  startBusRotation() {
+    if (this.busRotationTimer) {
+      clearInterval(this.busRotationTimer);
+      this.busRotationTimer = null;
+    }
+
+    if (!parseBoolean(this.config.metroBusRotateStops, false)) {
+      return;
+    }
+
+    const interval = Math.max(2000, this.getConfigNumber("metroBusStopRotationInterval", 15000));
+    this.lastBusRotationAt = Date.now();
+    this.busRotationTimer = setInterval(() => {
+      const stops = ensureArray(this.dataState.busStops);
+      if (stops.length < 2) {
+        return;
+      }
+
+      this.currentBusStopIndex = (this.currentBusStopIndex + 1) % stops.length;
+      this.lastBusRotationAt = Date.now();
+      this.updateDom(0);
+    }, interval);
+  },
+
   startUiTicker() {
     if (this.uiTickTimer) {
       clearInterval(this.uiTickTimer);
@@ -741,16 +923,57 @@ Module.register("MMM-DCMetroTrains", {
     }
 
     this.uiTickTimer = setInterval(() => {
-      if (!this.loaded || this.isErrorRecent()) {
+      if (!this.loaded || this.shouldShowBlockingError()) {
         return;
       }
 
-      if (!this.config.showFreshnessChip) {
+      if (!this.config.showFreshnessChip && !this.config.showLastUpdated) {
         return;
       }
 
-      this.updateDom(0);
+      this.refreshLiveSummaryNodes();
     }, 1000);
+  },
+
+  refreshLiveSummaryNodes() {
+    const nodes = this.liveSummaryNodes || {};
+    const hasLiveNode = Object.values(nodes).some((node) => node && node.isConnected);
+
+    if (!hasLiveNode || !this.dataState.fetchedAt) {
+      return false;
+    }
+
+    const freshness = this.extractFreshness(this.dataState.fetchedAt);
+
+    if (nodes.freshnessChip && nodes.freshnessChip.isConnected) {
+      nodes.freshnessChip.classList.toggle("dcmetro__summaryChip--stale", freshness.isStale);
+    }
+
+    if (nodes.freshnessLabel && nodes.freshnessLabel.isConnected) {
+      nodes.freshnessLabel.textContent = freshness.isStale ? "Stale" : "Fresh";
+    }
+
+    if (nodes.freshnessValue && nodes.freshnessValue.isConnected) {
+      nodes.freshnessValue.textContent = this.relativeTime(this.dataState.fetchedAt);
+    }
+
+    if (nodes.nextStationValue && nodes.nextStationValue.isConnected) {
+      nodes.nextStationValue.textContent = this.getNextStationCountdownText();
+    }
+
+    if (nodes.refreshValue && nodes.refreshValue.isConnected) {
+      nodes.refreshValue.textContent = this.getNextRefreshCountdownText();
+    }
+
+    if (nodes.updatedContainer && nodes.updatedContainer.isConnected) {
+      nodes.updatedContainer.classList.toggle("dcmetro__updated--stale", freshness.isStale);
+    }
+
+    if (nodes.updatedValue && nodes.updatedValue.isConnected) {
+      nodes.updatedValue.textContent = this.relativeTime(this.dataState.fetchedAt);
+    }
+
+    return true;
   },
 
   socketNotificationReceived(notification, payload) {
@@ -768,11 +991,19 @@ Module.register("MMM-DCMetroTrains", {
         incidents: data.incidents || [],
         fetchedAt: data.fetchedAt || Date.now(),
         error: null,
-        errorAt: null
+        errorAt: null,
+        degradedMode: parseBoolean(data.degradedMode, false),
+        retryAttempt: parseNumber(data.retryAttempt, 0),
+        lastSuccessAt: data.lastSuccessAt || null,
+        lastErrorCode: data.lastErrorCode || null
       };
 
       if (this.currentStationIndex >= this.dataState.stations.length) {
         this.currentStationIndex = 0;
+      }
+
+      if (this.currentBusStopIndex >= this.dataState.busStops.length) {
+        this.currentBusStopIndex = 0;
       }
 
       this.lastRefreshAt = this.dataState.fetchedAt;
@@ -784,8 +1015,13 @@ Module.register("MMM-DCMetroTrains", {
 
     if (notification === "DC_METRO_ERROR") {
       this.loaded = true;
+      const hadData = Boolean(this.dataState.fetchedAt);
       this.dataState.error = (data && data.error) || payload || "Unable to load Metro train data.";
-      this.dataState.errorAt = Date.now();
+      this.dataState.errorAt = hadData ? null : Date.now();
+      this.dataState.degradedMode = parseBoolean(data.degradedMode, hadData);
+      this.dataState.retryAttempt = parseNumber(data.retryAttempt, this.dataState.retryAttempt || 0);
+      this.dataState.lastSuccessAt = data.lastSuccessAt || this.dataState.lastSuccessAt || null;
+      this.dataState.lastErrorCode = data.lastErrorCode || this.dataState.lastErrorCode || null;
       this.updateDom(this.hasRenderedData ? 0 : this.config.animationSpeed);
       this.hasRenderedData = true;
     }
@@ -925,6 +1161,64 @@ Module.register("MMM-DCMetroTrains", {
     return windows.some((window) => this.matchesWindow(now, window));
   },
 
+  isEventDateToday() {
+    const schedule = this.config.profileSchedule || {};
+    const eventDates = ensureArray(schedule.eventDates).map((entry) => String(entry).trim()).filter(Boolean);
+    if (isEmpty(eventDates)) {
+      return false;
+    }
+
+    const now = new Date();
+    const isoDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+    return eventDates.includes(isoDate);
+  },
+
+  getResolvedProfileName() {
+    const activeProfile = this.getConfigString("activeProfile", "auto");
+    if (activeProfile && activeProfile !== "auto") {
+      return activeProfile;
+    }
+
+    if (this.isEventDateToday()) {
+      return "event";
+    }
+
+    const schedule = this.config.profileSchedule || {};
+    const now = new Date();
+    if (this.matchesAnyWindow(now, schedule.workday || {})) {
+      return "workday";
+    }
+
+    if (this.matchesAnyWindow(now, schedule.weekend || {})) {
+      return "weekend";
+    }
+
+    return "default";
+  },
+
+  getProfileOverrides(profileName) {
+    const allProfiles = this.config.profiles || {};
+    if (!profileName || profileName === "default") {
+      return {};
+    }
+
+    const profile = allProfiles[profileName];
+    return profile && typeof profile === "object" ? profile : {};
+  },
+
+  getProfileValue(profileName, key, fallback) {
+    const overrides = this.getProfileOverrides(profileName);
+    return overrides[key] != null ? overrides[key] : fallback;
+  },
+
+  getProfileBool(profileName, key, fallback) {
+    return parseBoolean(this.getProfileValue(profileName, key, fallback), fallback);
+  },
+
+  getProfileNumber(profileName, key, fallback) {
+    return parseNumber(this.getProfileValue(profileName, key, fallback), fallback);
+  },
+
   isErrorRecent() {
     const ERROR_TIMEOUT_MS = 300000; // 5 minutes
     if (!this.dataState.error || !this.dataState.errorAt) {
@@ -932,6 +1226,92 @@ Module.register("MMM-DCMetroTrains", {
     }
 
     return (Date.now() - this.dataState.errorAt) < ERROR_TIMEOUT_MS;
+  },
+
+  shouldShowBlockingError() {
+    if (!this.isErrorRecent()) {
+      return false;
+    }
+
+    // Keep showing last known good data during transient outages.
+    return !this.dataState.fetchedAt;
+  },
+
+  getConnectionStatusText() {
+    const code = String(this.dataState.lastErrorCode || "").toLowerCase();
+    if (!code) {
+      return "Healthy";
+    }
+
+    if (code === "timeout") {
+      return "Timeout";
+    }
+
+    if (code === "rate_limited") {
+      return "Rate limited";
+    }
+
+    if (code === "api_unavailable") {
+      return "API unavailable";
+    }
+
+    if (code === "api_error") {
+      return "API error";
+    }
+
+    if (code === "parse_error") {
+      return "Parse issue";
+    }
+
+    if (code === "cache_fallback") {
+      return "Using cache";
+    }
+
+    return "No data";
+  },
+
+  getCrowdingSignalText(station) {
+    const predictions = limitArray(ensureArray(station && station.predictions), 4);
+    if (isEmpty(predictions)) {
+      return "Unknown";
+    }
+
+    const minuteValues = predictions.map((item) => item.minutesSort).filter((value) => Number.isFinite(value) && value < 999);
+    const cars = predictions.map((item) => Number(String(item.cars || "").replace(/[^0-9]/g, ""))).filter((value) => Number.isFinite(value) && value > 0);
+
+    const headway = minuteValues.length > 1 ? (Math.max(...minuteValues) - Math.min(...minuteValues)) : minuteValues[0] || 0;
+    const avgCars = cars.length ? (cars.reduce((sum, value) => sum + value, 0) / cars.length) : 0;
+
+    if (avgCars >= 7 && headway <= 6) {
+      return "Low";
+    }
+
+    if (avgCars >= 5 && headway <= 10) {
+      return "Medium";
+    }
+
+    return "High";
+  },
+
+  getLeaveNowText(station) {
+    const next = ensureArray(station && station.predictions)[0];
+    if (!next || !Number.isFinite(next.minutesSort) || next.minutesSort >= 999) {
+      return "Unknown";
+    }
+
+    const walkBuffer = Math.max(0, this.getConfigNumber("walkBufferMinutes", 5));
+    const leaveWindow = Math.max(1, this.getConfigNumber("leaveNowWindowMinutes", 6));
+    const eta = next.minutesSort;
+
+    if (eta <= walkBuffer + 1) {
+      return "Leave now";
+    }
+
+    if (eta <= walkBuffer + leaveWindow) {
+      return "Leave soon";
+    }
+
+    return `Hold (${eta}m)`;
   },
 
   formatStationTitle(station) {
@@ -971,7 +1351,9 @@ Module.register("MMM-DCMetroTrains", {
   },
 
   getStationEffectiveRows(station, isCompact) {
-    const baseRows = parseNumber(station.profile.maxRows, this.config.maxRows);
+    const profileName = this.getResolvedProfileName();
+    const profiledMaxRows = this.getProfileNumber(profileName, "maxRows", this.config.maxRows);
+    const baseRows = parseNumber(station.profile.maxRows, profiledMaxRows);
     if (!this.isCommuteTime() || !isCompact) {
       return baseRows;
     }

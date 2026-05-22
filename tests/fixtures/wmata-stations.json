@@ -1,0 +1,12 @@
+{
+  "Stations": [
+    {
+      "Code": "A01",
+      "Name": "Metro Center"
+    },
+    {
+      "Code": "C01",
+      "Name": "Metro Center"
+    }
+  ]
+}

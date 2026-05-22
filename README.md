@@ -18,15 +18,19 @@ A full-featured [MagicMirror²](https://github.com/MagicMirrorOrg/MagicMirror) m
 - Active Metro service incidents panel
 - Freshness indicators and relative "last updated" timestamp
 - Live countdown chips for next station rotation and next data refresh
+- Degraded-mode connection chips with clearer timeout/rate-limit/API status
 - Refreshes and station rotation update in place after the first render without flashing the module
 - Commute / peak-hour compact mode
+- Profile-based display modes (`workday`, `weekend`, `event`) with auto schedule support
 - Quiet-hours mode for lower-motion overnight display
 - Custom line order, station title formatting, and configurable thresholds
 - Debug overlay and custom fallback messages
 - Optional MetroBus stop predictions section
-- Automatic retries when the API fails
+- MetroBus route badges, incident overlays, and optional stop rotation
+- Shared helper-side WMATA request cache and persistent last-known-good fallback
+- Exponential retry backoff with degraded-mode status when the API fails
 
-Current npm/package version is `1.0.8`. Ongoing hardening and documentation refinements are tracked under `Unreleased` in [CHANGELOG.md](CHANGELOG.md).
+Current npm/package version is `2.0.0`. See [CHANGELOG.md](CHANGELOG.md) for the full release notes and upgrade details.
 
 ## Requirements
 
@@ -38,6 +42,20 @@ This module will not function without a valid API key.
 ## Changelog
 
 See [CHANGELOG.md](CHANGELOG.md) for full release history.
+
+## Upgrade Notes For 2.0.0
+
+Version 2.0.0 formalizes the breaking configuration removals that accumulated during the late 1.x cleanup cycle.
+
+If you are upgrading from an earlier 1.x install, remove these deprecated options from your config before restarting MagicMirror:
+
+- `showWeather`
+- `weatherLatitude`
+- `weatherLongitude`
+- `showFirstLastTrains`
+- `firstLastTrainMode`
+
+No replacement settings are required for those removed options. All other new features in 2.0.0 are additive and can be adopted incrementally.
 
 ## Installation
 
@@ -158,17 +176,23 @@ Add this to your `config/config.js` file:
     showMetroBus: false,
     metroBusOnlyMode: false,
     showMetroBusHeader: true,
+    metroBusRotateStops: false,
+    metroBusStopRotationInterval: 15000,
     metroBusStops: [
       "1001195",
       {
         stopId: "1001436",
         name: "14th St & Irving",
         routeFilter: ["52", "54"],
-        maxRows: 4
+        maxRows: 4,
+        rotate: true
       }
     ],
     metroBusMaxRows: 5,
     metroBusRouteFilter: [],
+    enableSharedApiCache: true,
+    directionMode: "terminal",
+    activeProfile: "auto",
     rotateStations: true,
     groupByLine: true,
     commuteMode: true,
@@ -181,6 +205,8 @@ Add this to your `config/config.js` file:
     },
     autoCompact: true,
     commuteMaxRows: 5,
+    walkBufferMinutes: 5,
+    leaveNowWindowMinutes: 6,
     compact: false
   }
 }
@@ -200,20 +226,20 @@ All other settings are optional and fall back to the defaults shown below.
 | `stationCodes` | Array<String or Object> or String | No | `["A01"]` | Station codes to query. You can provide an array (recommended) or a single string code. Values are trimmed and must not be empty. Each array entry can be a string code or an object with per-station overrides such as `name`, `lineFilter`, `destinationIncludes`, `maxRows`, `compact`, `groupByLine`, `showIncidents`, and `alerts`. |
 | `refreshInterval` | Number | No | `30000` | How often train predictions refresh, in milliseconds. Must be >= `5000`. |
 | `incidentsRefreshInterval` | Number | No | `120000` | How often service incidents refresh, in milliseconds. Must be >= `5000`. |
-| `retryDelay` | Number | No | `15000` | Wait time before retrying after a failed predictions request. Must be >= `1000`. |
-| `stationRotationInterval` | Number | No | `20000` | Time each station remains visible before rotating to the next station. |
+| `retryDelay` | Number | No | `15000` | Base retry delay before retrying after a failed predictions request. Exponential backoff is applied for repeated failures. Must be >= `1000`. |
+| `stationRotationInterval` | Number | No | `20000` | Time each station remains visible before rotating to the next station. Must be >= `2000`. |
 | `maxRows` | Number | No | `8` | Maximum number of train rows rendered per station card. Must be >= `1`. |
-| `summaryCount` | Number | No | `3` | Number of upcoming trains shown in the summary strip. |
+| `summaryCount` | Number | No | `3` | Number of upcoming trains shown in the summary strip. Must be >= `1`. |
 | `lineFilter` | Array<String> | No | `[]` | Optional line filter. Empty means all lines. Example values: `RD`, `OR`, `SV`, `BL`, `YL`, `GR`. |
 | `lineOrder` | Array<String> | No | `["RD", "OR", "SV", "BL", "YL", "GR", "NA"]` | Custom line display order used for grouped sections. |
 | `destinationIncludes` | Array<String> | No | `[]` | Optional destination keyword filter (case-insensitive). Empty means all destinations. |
 | `alertRules` | Array<String> | No | `[]` | Keyword list for custom alerts. If a keyword matches an arrival or service alert, the station card shows an alert badge. |
 | `hideWhenNoTrains` | Boolean | No | `false` | Hides station cards with no current train predictions. |
 | `onlyShowAlertsForVisibleLines` | Boolean | No | `false` | Restricts incident panel items to lines currently visible in station predictions. |
-| `maxIncidentRows` | Number | No | `3` | Maximum number of incident rows shown in the incident panel. |
+| `maxIncidentRows` | Number | No | `3` | Maximum number of incident rows shown in the incident panel. Must be >= `1`. |
 | `incidentScroll` | Boolean | No | `false` | Enables a horizontal ticker-style incident scroll mode. |
-| `incidentScrollSpeed` | Number | No | `28` | Incident ticker cycle duration in seconds (higher is slower). |
-| `incidentScrollSpeedMin` | Number | No | `8` | Minimum ticker cycle duration floor in seconds used to prevent overly fast scrolling. |
+| `incidentScrollSpeed` | Number | No | `28` | Incident ticker cycle duration in seconds (higher is slower). Must be >= `1`, and must be >= `incidentScrollSpeedMin` when both are set. |
+| `incidentScrollSpeedMin` | Number | No | `8` | Minimum ticker cycle duration floor in seconds used to prevent overly fast scrolling. Must be >= `1`. |
 | `etaColorMode` | String | No | `status` | ETA coloring mode: `off`, `status`, or `gradient`. |
 | `carsColorMode` | String | No | `wmata` | Car badge coloring mode: `wmata`, `capacity`, or `off`. WMATA uses plain line colors; `capacity` keeps the older filled highlight-style look. |
 | `statusThresholds` | Object | No | `{ watchMinutes: 8, delayedMinutes: 15, criticalMinutes: 25 }` | Minute thresholds for status classification and ETA highlighting. |
@@ -223,7 +249,7 @@ All other settings are optional and fall back to the defaults shown below.
 | `updateJitterMs` | Number | No | `0` | Adds random refresh jitter (+/- ms) to reduce synchronized API bursts. |
 | `debugOverlay` | Boolean | No | `false` | Shows a compact debug line with station, row, incident, and mode counters. |
 | `fallbackMessage` | String | No | `"No upcoming trains."` | Custom message used when no predictions are available. |
-| `fontScale` | Number | No | `1` | Scales module text size. Example: `0.9`, `1`, `1.1`. |
+| `fontScale` | Number | No | `1` | Scales module text size. Example: `0.9`, `1`, `1.1`. Must be > `0` and <= `3`. |
 | `showIncidents` | Boolean | No | `true` | Shows or hides Metro incident messages panel. |
 | `incidentSeverityFilter` | String | No | `all` | Filters incident items by severity. Use `all`, `advisory`, `major`, or `critical`. Advisories will also show a date-range chip when WMATA includes start and end dates. |
 | `showHeader` | Boolean | No | `true` | Shows or hides station name header row. |
@@ -241,27 +267,64 @@ All other settings are optional and fall back to the defaults shown below.
 | `showMetroBus` | Boolean | No | `false` | Enables the MetroBus predictions section. Off by default. |
 | `metroBusOnlyMode` | Boolean | No | `false` | MetroBus-only compact mode. Hides rail cards/incidents and shows only MetroBus content in a tighter layout. |
 | `showMetroBusHeader` | Boolean | No | `true` | Shows or hides the MetroBus section header label. |
+| `metroBusRotateStops` | Boolean | No | `false` | Enables MetroBus stop-card rotation when multiple stops are configured. |
+| `metroBusStopRotationInterval` | Number | No | `15000` | MetroBus stop-card rotation interval in milliseconds. Must be >= `2000`. |
 | `metroBusStops` | Array<String or Object> | No | `[]` | MetroBus stop IDs. Supports string IDs or object entries with `stopId`, `name`, `routeFilter`, `maxRows`, and `priority`. |
 | `metroBusMaxRows` | Number | No | `5` | Maximum buses shown per stop card (unless a stop-level `maxRows` overrides it). |
 | `metroBusRouteFilter` | Array<String> | No | `[]` | Global MetroBus route filter; empty means all routes. |
-| `staleAfterSeconds` | Number | No | `180` | Time threshold used to mark the feed as stale in the freshness indicators. |
+| `staleAfterSeconds` | Number | No | `180` | Time threshold used to mark the feed as stale in the freshness indicators. Must be >= `1`. |
+| `directionMode` | String | No | `cardinal` | Direction label mode for train rows. Use `cardinal` (`Northbound` / `Southbound`) or `terminal` (`Toward <destination>`). |
+| `activeProfile` | String | No | `auto` | Display profile mode. Use `auto`, `workday`, `weekend`, or `event`. |
+| `profiles` | Object | No | built-in profile map | Override display behavior per profile (for example `compact`, `autoCompact`, `summaryCount`, `maxRows`). |
+| `profileSchedule` | Object | No | built-in schedule | Auto profile schedule using `workday`, `weekend`, and optional `eventDates` (`YYYY-MM-DD`). |
 | `rotateStations` | Boolean | No | `true` | Enables station rotation when more than one station is configured. |
 | `groupByLine` | Boolean | No | `true` | Groups arrivals by rail line instead of showing one flat table. |
 | `commuteMode` | Boolean | No | `true` | Enables commute-aware UI behavior such as the peak-hour summary chip and auto-compact logic. |
 | `commuteSchedule` | Object | No | `{ weekdays: [...], weekends: [] }` | Defines commute windows. Each window uses `{ start: "HH:MM", end: "HH:MM" }`. |
 | `autoCompact` | Boolean | No | `true` | Uses compact styling automatically during commute windows. |
-| `commuteMaxRows` | Number | No | `5` | Maximum rows shown during commute/compact windows. |
+| `commuteMaxRows` | Number | No | `5` | Maximum rows shown during commute/compact windows. Must be >= `1`. |
+| `walkBufferMinutes` | Number | No | `5` | Walking/prep buffer used by the `Departure` summary chip. Must be >= `0`. |
+| `leaveNowWindowMinutes` | Number | No | `6` | Additional planning window used by the `Departure` summary chip. Must be >= `1`. |
 | `compact` | Boolean | No | `false` | Forces the compact layout at all times. |
-| `animationSpeed` | Number | No | `1000` | DOM update animation speed in milliseconds. |
+| `animationSpeed` | Number | No | `1000` | DOM update animation speed in milliseconds. Must be >= `0`. |
+| `enableSharedApiCache` | Boolean | No | `true` | Enables helper-side shared request caching with endpoint-aware TTLs to reduce duplicate WMATA calls. |
 
 ## Notes
 
-- Direction labels are derived from WMATA group values (`1` = Northbound, `2` = Southbound).
+- Direction labels default to WMATA group values (`1` = Northbound, `2` = Southbound). Set `directionMode: "terminal"` for `Toward <destination>` labels.
 - If incidents fail to load, train predictions continue to update normally.
+- If predictions fail after a successful fetch, the module keeps displaying last-known-good in-memory data and surfaces degraded-mode retry status.
 - Car badges are color-coded to give a quick sense of train length at a glance.
 - If you want station-specific behavior, use object entries inside `stationCodes` instead of only string codes.
 - For best results, keep `refreshInterval` at 20-60 seconds to avoid excessive API usage.
 - Invalid config values are rejected at startup with a visible module error and detailed server-side log message.
+
+## Testing
+
+Run lint checks:
+
+```bash
+npm run lint
+```
+
+Run tests (Node built-in test runner):
+
+```bash
+npm test
+```
+
+Fixture payloads for WMATA responses live under `tests/fixtures`.
+
+## Troubleshooting Matrix
+
+| Symptom | Likely Cause | What to Check | Suggested Fix |
+| --- | --- | --- | --- |
+| `Connection: Timeout` chip appears repeatedly | WMATA request timeout or network instability | Network reachability from MagicMirror host, firewall rules, WMATA status | Increase `retryDelay`, keep default timeout behavior, validate internet routing |
+| `Connection: Rate limited` chip appears | WMATA API throttling (`HTTP 429`) | Refresh cadence and number of running transit modules | Increase `refreshInterval`, keep `enableSharedApiCache: true`, reduce duplicate polling |
+| Module shows degraded mode with old data | Upstream API failing, module using snapshot fallback | `lastGood` freshness in summary chips and server logs | Keep mirror running while API recovers; verify API key and upstream health |
+| No rail arrivals but module is not errored | Filters remove all trains or station has no active trains | `lineFilter`, `destinationIncludes`, station-specific overrides | Relax filters and verify station codes are valid WMATA rail station IDs |
+| MetroBus section is empty | Stops missing/invalid or filters too strict | `metroBusStops`, `metroBusRouteFilter`, per-stop `routeFilter` | Confirm stop IDs, remove route filters temporarily, then narrow again |
+| Incident list looks noisy | Severity filter too broad | `incidentSeverityFilter`, `onlyShowAlertsForVisibleLines` | Use `major`/`critical` and enable visible-line filtering |
 
 ## Advanced Configuration Guide
 

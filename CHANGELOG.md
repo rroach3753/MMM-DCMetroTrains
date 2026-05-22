@@ -4,7 +4,31 @@ All notable changes to this project are documented in this file.
 
 The format is based on Keep a Changelog.
 
-## [Unreleased]
+## [2.0.0] - 2026-05-22
+
+### Upgrade Notes
+- This release formalizes breaking configuration removals introduced during the late 1.x cleanup cycle.
+- Remove deprecated weather options from existing configs: `showWeather`, `weatherLatitude`, `weatherLongitude`.
+- Remove deprecated first/last-train options from existing configs: `showFirstLastTrains`, `firstLastTrainMode`.
+- No direct replacement settings are required for those removed options.
+
+### Added
+- Added a lightweight Node test harness (`npm test`) with baseline fixture validation for WMATA stations, predictions, incidents, and MetroBus payload shapes.
+- Added fixture files under `tests/fixtures` to support repeatable regression checks.
+- Added targeted helper regression coverage for shared-cache pruning and persisted snapshot timestamp restoration.
+- Added profile-based display controls (`activeProfile`, `profiles`, `profileSchedule`) with automatic workday/weekend/event profile resolution in frontend rendering.
+- Added summary planning chips for crowding signal and departure guidance (`walkBufferMinutes`, `leaveNowWindowMinutes`).
+- Added MetroBus parity upgrades: route badges, stop-level incident overlays, and optional stop rotation (`metroBusRotateStops`, `metroBusStopRotationInterval`).
+- Added a troubleshooting matrix to README for common runtime and API-state symptoms.
+
+### Changed
+- Reworked retry behavior from fixed-delay retries to capped exponential backoff using `retryDelay` as the base delay.
+- Added degraded-mode state tracking and metadata flow from `node_helper` to frontend socket payloads.
+- Optimized summary ticker updates to refresh live countdown/freshness text nodes without forcing a full module DOM redraw every second.
+- Updated README option constraints and testing instructions to match runtime behavior.
+- Added helper-side shared request cache with endpoint-aware TTLs (`enableSharedApiCache`) to reduce duplicate WMATA requests.
+- Improved incident ranking by scoring configured-line overlap and configured-station text matches (`impactLabel` / `impactScore`).
+- Added optional terminal-style direction labeling (`directionMode: "terminal"`).
 
 ### Removed
 - Removed the optional weather feature from both frontend rendering and backend fetch logic.
@@ -15,6 +39,9 @@ The format is based on Keep a Changelog.
 
 ### Fixed
 - Added explicit WMATA request timeout handling in the shared JSON helper to avoid indefinite hangs on stalled upstream calls.
+- Expanded startup validation to cover additional numeric bounds (`stationRotationInterval`, `staleAfterSeconds`, `summaryCount`, `maxIncidentRows`, `incidentScrollSpeed`, `incidentScrollSpeedMin`, `fontScale`, `commuteMaxRows`, `animationSpeed`, `updateJitterMs`, `metroBusStopRotationInterval`, `walkBufferMinutes`, and `leaveNowWindowMinutes`) plus mode checks for `directionMode`.
+- Prevented transient API failures from blanking the module when previous data is available by preserving and rendering last-known-good in-memory data while retries are in progress.
+- Added persistent snapshot fallback on disk (`.cache/dcmetro-last-good.json`) to restore last-known-good data across helper restarts during upstream outages.
 
 ## [1.0.8] - 2026-05-08
 

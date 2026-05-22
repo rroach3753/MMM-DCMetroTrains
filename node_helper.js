@@ -1,5 +1,7 @@
 const NodeHelper = require("node_helper");
 const https = require("node:https");
+const fs = require("node:fs");
+const path = require("node:path");
 
 const LINE_ORDER = {
   RD: 1,
@@ -127,6 +129,11 @@ const SEVERITY_RANK = {
   critical: 3
 };
 
+const MAX_RETRY_DELAY_MS = 300000;
+const MAX_SHARED_CACHE_ENTRIES = 64;
+const SNAPSHOT_DIR = path.join(__dirname, ".cache");
+const SNAPSHOT_FILE = path.join(SNAPSHOT_DIR, "dcmetro-last-good.json");
+
 module.exports = NodeHelper.create({
   start() {
     this.config = null;
@@ -141,6 +148,14 @@ module.exports = NodeHelper.create({
     this.busStopProfiles = [];
     this.stationCodesByName = {};
     this.normalizedLineOrderCache = [];
+    this.retryAttempt = 0;
+    this.degradedMode = false;
+    this.lastSuccessAt = null;
+    this.latestDataTimestamp = null;
+    this.lastErrorMessage = null;
+    this.lastErrorCode = null;
+    this.requestCache = new Map();
+    this.snapshotLoaded = false;
   },
 
   stop() {
@@ -196,6 +211,80 @@ module.exports = NodeHelper.create({
       errors.push("retryDelay must be >= 1000 ms");
     }
 
+    const stationRotationInterval = parseNumber(config.stationRotationInterval, null);
+    if (config.stationRotationInterval != null && (!Number.isFinite(stationRotationInterval) || stationRotationInterval < 2000)) {
+      errors.push("stationRotationInterval must be >= 2000 ms");
+    }
+
+    const staleAfterSeconds = parseNumber(config.staleAfterSeconds, null);
+    if (config.staleAfterSeconds != null && (!Number.isFinite(staleAfterSeconds) || staleAfterSeconds < 1)) {
+      errors.push("staleAfterSeconds must be >= 1");
+    }
+
+    const summaryCount = parseNumber(config.summaryCount, null);
+    if (config.summaryCount != null && (!Number.isFinite(summaryCount) || summaryCount < 1)) {
+      errors.push("summaryCount must be >= 1");
+    }
+
+    const fontScale = parseNumber(config.fontScale, null);
+    if (config.fontScale != null && (!Number.isFinite(fontScale) || fontScale <= 0 || fontScale > 3)) {
+      errors.push("fontScale must be > 0 and <= 3");
+    }
+
+    const maxIncidentRows = parseNumber(config.maxIncidentRows, null);
+    if (config.maxIncidentRows != null && (!Number.isFinite(maxIncidentRows) || maxIncidentRows < 1)) {
+      errors.push("maxIncidentRows must be >= 1");
+    }
+
+    const incidentScrollSpeed = parseNumber(config.incidentScrollSpeed, null);
+    if (config.incidentScrollSpeed != null && (!Number.isFinite(incidentScrollSpeed) || incidentScrollSpeed < 1)) {
+      errors.push("incidentScrollSpeed must be >= 1");
+    }
+
+    const incidentScrollSpeedMin = parseNumber(config.incidentScrollSpeedMin, null);
+    if (config.incidentScrollSpeedMin != null && (!Number.isFinite(incidentScrollSpeedMin) || incidentScrollSpeedMin < 1)) {
+      errors.push("incidentScrollSpeedMin must be >= 1");
+    }
+
+    if (config.incidentScrollSpeed != null && config.incidentScrollSpeedMin != null && incidentScrollSpeed < incidentScrollSpeedMin) {
+      errors.push("incidentScrollSpeed must be >= incidentScrollSpeedMin");
+    }
+
+    const commuteMaxRows = parseNumber(config.commuteMaxRows, null);
+    if (config.commuteMaxRows != null && (!Number.isFinite(commuteMaxRows) || commuteMaxRows < 1)) {
+      errors.push("commuteMaxRows must be >= 1");
+    }
+
+    const animationSpeed = parseNumber(config.animationSpeed, null);
+    if (config.animationSpeed != null && (!Number.isFinite(animationSpeed) || animationSpeed < 0)) {
+      errors.push("animationSpeed must be >= 0");
+    }
+
+    const updateJitterMs = parseNumber(config.updateJitterMs, null);
+    if (config.updateJitterMs != null && (!Number.isFinite(updateJitterMs) || updateJitterMs < 0)) {
+      errors.push("updateJitterMs must be >= 0");
+    }
+
+    const directionMode = normalizeLowercase(config.directionMode, "cardinal");
+    if (directionMode && !["cardinal", "terminal"].includes(directionMode)) {
+      errors.push("directionMode must be 'cardinal' or 'terminal'");
+    }
+
+    const metroBusStopRotationInterval = parseNumber(config.metroBusStopRotationInterval, null);
+    if (config.metroBusStopRotationInterval != null && (!Number.isFinite(metroBusStopRotationInterval) || metroBusStopRotationInterval < 2000)) {
+      errors.push("metroBusStopRotationInterval must be >= 2000 ms");
+    }
+
+    const walkBufferMinutes = parseNumber(config.walkBufferMinutes, null);
+    if (config.walkBufferMinutes != null && (!Number.isFinite(walkBufferMinutes) || walkBufferMinutes < 0)) {
+      errors.push("walkBufferMinutes must be >= 0");
+    }
+
+    const leaveNowWindowMinutes = parseNumber(config.leaveNowWindowMinutes, null);
+    if (config.leaveNowWindowMinutes != null && (!Number.isFinite(leaveNowWindowMinutes) || leaveNowWindowMinutes < 1)) {
+      errors.push("leaveNowWindowMinutes must be >= 1");
+    }
+
     if (errors.length > 0) {
       console.error("[MMM-DCMetroTrains] Config validation errors:", errors.join("; "));
       return false;
@@ -230,6 +319,7 @@ module.exports = NodeHelper.create({
   async initialize() {
     this.stopTimers();
     this.clearRetryTimer();
+    this.loadPersistedSnapshot();
 
     try {
       if (this.isMetroBusOnlyMode()) {
@@ -238,13 +328,14 @@ module.exports = NodeHelper.create({
         await this.fetchStations();
         this.validateStationProfiles();
       }
-      await this.refreshPredictionsAndWeather();
-      await this.refreshIncidents();
+      const predictionsOk = await this.refreshPredictionsAndWeather();
+      if (predictionsOk) {
+        await this.refreshIncidents();
+      }
       this.scheduleNextPredictionRefresh();
       this.scheduleNextIncidentRefresh();
     } catch (error) {
-      this.reportError(`DC Metro update failed: ${error.message}`);
-      this.scheduleRetry();
+      this.handleRefreshFailure(error, "initialize");
     }
   },
 
@@ -264,7 +355,11 @@ module.exports = NodeHelper.create({
     const interval = Math.max(5000, this.getConfigNumber("refreshInterval", 30000));
     this.fetchTimer = setTimeout(async () => {
       await this.refreshPredictionsAndWeather();
-      this.scheduleNextPredictionRefresh();
+
+      // Retry timer takes over scheduling when prediction refreshes fail.
+      if (!this.retryTimer) {
+        this.scheduleNextPredictionRefresh();
+      }
     }, this.withJitter(interval));
   },
 
@@ -290,27 +385,113 @@ module.exports = NodeHelper.create({
     this.clearTimer("retryTimer");
   },
 
-  scheduleRetry() {
+  scheduleRetry(source) {
     this.clearRetryTimer();
-    const retryDelay = Math.max(1000, this.getConfigNumber("retryDelay", 15000));
+    const baseRetryDelay = Math.max(1000, this.getConfigNumber("retryDelay", 15000));
+    const retryDelay = Math.min(MAX_RETRY_DELAY_MS, baseRetryDelay * Math.pow(2, Math.max(0, this.retryAttempt - 1)));
     this.retryTimer = setTimeout(() => this.initialize(), retryDelay);
+
+    this.reportError(`DC Metro update failed (${source}). Retrying in ${Math.round(retryDelay / 1000)}s.`, {
+      degradedMode: this.degradedMode,
+      retryAttempt: this.retryAttempt,
+      retryDelay,
+      lastSuccessAt: this.lastSuccessAt,
+      errorCode: this.lastErrorCode
+    });
   },
 
-  reportError(message) {
+  reportError(message, extra = {}) {
     this.sendSocketNotification("DC_METRO_ERROR", {
       instanceId: this.instanceId,
-      error: message
+      error: message,
+      degradedMode: this.degradedMode,
+      retryAttempt: this.retryAttempt,
+      lastSuccessAt: this.lastSuccessAt,
+      lastErrorCode: this.lastErrorCode,
+      ...extra
     });
+  },
+
+  handleRefreshFailure(error, source) {
+    this.retryAttempt += 1;
+    this.degradedMode = true;
+    this.lastErrorMessage = error.message;
+    this.lastErrorCode = this.classifyErrorCode(error);
+    this.tryRestoreFromSnapshot(source);
+    this.scheduleRetry(source);
+  },
+
+  markRefreshHealthy() {
+    this.retryAttempt = 0;
+    this.degradedMode = false;
+    this.lastErrorMessage = null;
+    this.lastErrorCode = null;
+    this.lastSuccessAt = Date.now();
+    this.clearRetryTimer();
+  },
+
+  classifyErrorCode(error) {
+    const message = String(error && error.message ? error.message : "").toLowerCase();
+
+    if (message.includes("timed out")) {
+      return "timeout";
+    }
+
+    const httpMatch = /http\s+(\d{3})/.exec(message);
+    if (httpMatch) {
+      const statusCode = Number(httpMatch[1]);
+      if (statusCode === 429) {
+        return "rate_limited";
+      }
+
+      if (statusCode >= 500) {
+        return "api_unavailable";
+      }
+
+      return "api_error";
+    }
+
+    if (message.includes("parse")) {
+      return "parse_error";
+    }
+
+    return "unknown";
+  },
+
+  tryRestoreFromSnapshot(sourceLabel) {
+    this.loadPersistedSnapshot();
+
+    const hasSnapshot = isEmpty(this.latestStations) && isEmpty(this.latestBusStops)
+      ? false
+      : (this.lastSuccessAt != null);
+
+    if (!hasSnapshot) {
+      return false;
+    }
+
+    this.degradedMode = true;
+    this.lastErrorCode = this.lastErrorCode || "cache_fallback";
+    this.broadcastData();
+    this.reportError(`Using last-known-good snapshot while ${sourceLabel} retries continue.`, {
+      lastSuccessAt: this.lastSuccessAt,
+      lastErrorCode: this.lastErrorCode
+    });
+    return true;
   },
 
   broadcastData() {
     this.lastBroadcastAt = Date.now();
+    const fetchedAt = this.latestDataTimestamp || this.lastBroadcastAt;
     this.sendSocketNotification("DC_METRO_DATA", {
       instanceId: this.instanceId,
       stations: this.latestStations,
       busStops: this.latestBusStops,
       incidents: this.latestIncidents,
-      fetchedAt: this.lastBroadcastAt
+      fetchedAt,
+      degradedMode: this.degradedMode,
+      retryAttempt: this.retryAttempt,
+      lastSuccessAt: this.lastSuccessAt,
+      lastErrorCode: this.lastErrorCode
     });
   },
 
@@ -329,10 +510,14 @@ module.exports = NodeHelper.create({
       // Update state atomically
       this.latestBusStops = busStops;
       this.latestStations = newStations;
+      this.markRefreshHealthy();
+      this.latestDataTimestamp = this.lastSuccessAt || Date.now();
+      this.persistLastGoodSnapshot();
       this.broadcastData();
+      return true;
     } catch (error) {
-      this.reportError(`DC Metro update failed: ${error.message}`);
-      this.scheduleRetry();
+      this.handleRefreshFailure(error, "predictions");
+      return false;
     }
   },
 
@@ -411,19 +596,73 @@ module.exports = NodeHelper.create({
 
     return incidents.map((item) => {
       const normalized = this.normalizeLines(item.LinesAffected || "");
-      const severity = this.classifyIncident(item.Description || "");
+      const severity = this.classifyIncident(item);
       const dateRangeText = this.formatIncidentDateRange(item);
+      const description = String(item.Description || "").replace(/\s+/g, " ").trim();
+      const impact = this.scoreIncidentImpact({
+        description,
+        lineCodes: normalized,
+        rank: severity.rank
+      });
 
       return {
         linesText: normalized.length ? normalized.join("/") : "System",
         lineCodes: normalized,
-        description: String(item.Description || "").replace(/\s+/g, " ").trim(),
+        description,
         dateRangeText,
         severity: severity.severity,
         severityLabel: severity.severityLabel,
-        rank: severity.rank
+        rank: severity.rank,
+        impactScore: impact.score,
+        impactLabel: impact.label,
+        impactedStations: impact.impactedStations
       };
+    }).sort((a, b) => {
+      if (a.impactScore !== b.impactScore) {
+        return b.impactScore - a.impactScore;
+      }
+
+      if (a.rank !== b.rank) {
+        return b.rank - a.rank;
+      }
+
+      return a.description.localeCompare(b.description);
     });
+  },
+
+  scoreIncidentImpact(incident) {
+    const configuredLines = this.getConfiguredLineSet();
+    const lineOverlap = ensureArray(incident.lineCodes).filter((line) => configuredLines.has(normalizeLineCode(line, ""))).length;
+    const descriptionText = normalizeLowercase(incident.description, "");
+
+    let stationHits = 0;
+    this.stationProfiles.forEach((profile) => {
+      const stationName = normalizeLowercase(this.stationMap[profile.code], "");
+      const codeText = normalizeLowercase(profile.code, "");
+      if ((stationName && descriptionText.includes(stationName)) || (codeText && descriptionText.includes(codeText))) {
+        stationHits += 1;
+      }
+    });
+
+    const score = (incident.rank || 1) * 100 + lineOverlap * 40 + stationHits * 30;
+    if (score >= 300) {
+      return { score, label: "High", impactedStations: stationHits };
+    }
+
+    if (score >= 180) {
+      return { score, label: "Medium", impactedStations: stationHits };
+    }
+
+    return { score, label: "Low", impactedStations: stationHits };
+  },
+
+  getConfiguredLineSet() {
+    const lines = new Set();
+    normalizeList(this.config.lineFilter).forEach((line) => lines.add(normalizeLineCode(line, "")));
+    this.stationProfiles.forEach((profile) => {
+      normalizeList(profile.lineFilter).forEach((line) => lines.add(normalizeLineCode(line, "")));
+    });
+    return lines;
   },
 
   resolveMetroBusStopProfiles() {
@@ -447,6 +686,7 @@ module.exports = NodeHelper.create({
       name: isObject ? entry.name || entry.label || null : null,
       routeFilter: isObject && entry.routeFilter ? normalizeList(entry.routeFilter) : normalizeList(this.config.metroBusRouteFilter),
       maxRows: parseNumber(isObject && entry.maxRows != null ? entry.maxRows : this.config.metroBusMaxRows, this.config.metroBusMaxRows),
+      rotate: parseBoolean(isObject && entry.rotate != null ? entry.rotate : this.getConfigBool("metroBusRotateStops", false), false),
       priority: parseNumber(isObject && entry.priority != null ? entry.priority : index, index)
     };
   },
@@ -488,18 +728,23 @@ module.exports = NodeHelper.create({
           });
 
         const limitedPredictions = limitArray(predictions, profile.maxRows);
+        const routes = [...new Set(limitedPredictions.map((item) => String(item.route || "").trim()).filter(Boolean))];
 
         return {
           stopId: profile.stopId,
           name: profile.name || response.StopName || profile.stopId,
-          predictions: limitedPredictions
+          predictions: limitedPredictions,
+          routes,
+          rotate: profile.rotate
         };
       } catch (error) {
         console.warn(`[MMM-DCMetroTrains] Failed to fetch Metrobus predictions for stop ${profile.stopId}:`, error.message);
         return {
           stopId: profile.stopId,
           name: profile.name || profile.stopId,
-          predictions: []
+          predictions: [],
+          routes: [],
+          rotate: profile.rotate
         };
       }
     }));
@@ -599,7 +844,7 @@ module.exports = NodeHelper.create({
         grouped[stationCode].push({
           line: item.Line || NA_LINE,
           destination: item.DestinationName || "Unknown",
-          direction: this.directionFromNumber(item.Group),
+          direction: this.directionFromNumber(item.Group, item.DestinationName),
           displayMinutes: this.formatDisplayMinutes(item.Min),
           minutesSort: this.normalizeMinutesSort(item.Min),
           cars: item.Car
@@ -914,7 +1159,15 @@ module.exports = NodeHelper.create({
     };
   },
 
-  directionFromNumber(group) {
+  directionFromNumber(group, destination) {
+    const mode = this.getConfigString("directionMode", "cardinal");
+    if (mode === "terminal") {
+      const name = String(destination || "").trim();
+      if (name) {
+        return `Toward ${name}`;
+      }
+    }
+
     if (String(group) === "1") {
       return "Northbound";
     }
@@ -926,15 +1179,43 @@ module.exports = NodeHelper.create({
     return "-";
   },
 
-  classifyIncident(description) {
-    const text = normalizeLowercase(description, "");
+  classifyIncident(incident) {
+    const text = normalizeLowercase(incident && incident.Description, "");
+    const title = normalizeLowercase(incident && (incident.Title || incident.Summary), "");
+    const source = `${title} ${text}`;
 
-    // Critical: Use word boundaries (\b) to prevent partial matches (e.g., "suspend" in "unsuspend")
-    if (/\b(suspend|suspended|no\s+service|shutdown|evacuat|fire|police|disabled|track\s+work|bus\s+bridge|major\s+delay)\b/.test(text)) {
+    let score = 0;
+    const criticalTerms = [
+      /\b(no\s+service|suspend|shutdown|evacuat|fire|police|disabled|bus\s+bridge)\b/,
+      /\b(major\s+delay|serious\s+delay|signal\s+problem|power\s+problem|derail)\b/
+    ];
+    const majorTerms = [
+      /\b(delay|delayed|single\s+track|slow\s+zone|construction|maintenance)\b/,
+      /\b(crowding|platform\s+change|operator\s+availability)\b/
+    ];
+
+    criticalTerms.forEach((pattern) => {
+      if (pattern.test(source)) {
+        score += 3;
+      }
+    });
+
+    majorTerms.forEach((pattern) => {
+      if (pattern.test(source)) {
+        score += 2;
+      }
+    });
+
+    const isSystemWide = !String(incident && incident.LinesAffected || "").trim();
+    if (isSystemWide) {
+      score += 1;
+    }
+
+    if (score >= 6) {
       return { rank: 3, severity: "critical", severityLabel: "Critical" };
     }
 
-    if (/\b(delay|delayed|single\s+track|slow|minor|construction|maintenance)\b/.test(text)) {
+    if (score >= 3) {
       return { rank: 2, severity: "major", severityLabel: "Major" };
     }
 
@@ -967,7 +1248,140 @@ module.exports = NodeHelper.create({
     };
   },
 
+  loadPersistedSnapshot() {
+    if (this.snapshotLoaded) {
+      return;
+    }
+
+    this.snapshotLoaded = true;
+
+    try {
+      if (!fs.existsSync(SNAPSHOT_FILE)) {
+        return;
+      }
+
+      const raw = fs.readFileSync(SNAPSHOT_FILE, "utf8");
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object") {
+        return;
+      }
+
+      this.latestStations = ensureArray(parsed.stations);
+      this.latestBusStops = ensureArray(parsed.busStops);
+      this.latestIncidents = ensureArray(parsed.incidents);
+      this.latestDataTimestamp = parsed.fetchedAt || parsed.lastSuccessAt || null;
+      this.lastSuccessAt = parsed.lastSuccessAt || parsed.fetchedAt || this.lastSuccessAt;
+    } catch (error) {
+      console.warn("[MMM-DCMetroTrains] Failed to load persisted snapshot:", error.message);
+    }
+  },
+
+  persistLastGoodSnapshot() {
+    try {
+      const snapshot = {
+        fetchedAt: this.latestDataTimestamp || Date.now(),
+        lastSuccessAt: this.lastSuccessAt || Date.now(),
+        stations: this.latestStations,
+        busStops: this.latestBusStops,
+        incidents: this.latestIncidents
+      };
+
+      fs.mkdirSync(SNAPSHOT_DIR, { recursive: true });
+      const tempFile = `${SNAPSHOT_FILE}.tmp`;
+      fs.writeFileSync(tempFile, JSON.stringify(snapshot), { encoding: "utf8", mode: 0o600 });
+      fs.renameSync(tempFile, SNAPSHOT_FILE);
+    } catch (error) {
+      console.warn("[MMM-DCMetroTrains] Failed to persist snapshot:", error.message);
+    }
+  },
+
+  pruneRequestCache(now) {
+    if (!this.requestCache.size) {
+      return;
+    }
+
+    for (const [url, entry] of this.requestCache.entries()) {
+      if (!entry || (!entry.promise && entry.expiresAt <= now)) {
+        this.requestCache.delete(url);
+      }
+    }
+
+    if (this.requestCache.size <= MAX_SHARED_CACHE_ENTRIES) {
+      return;
+    }
+
+    const sorted = [...this.requestCache.entries()]
+      .filter(([, entry]) => entry && !entry.promise)
+      .sort((a, b) => (a[1].expiresAt || 0) - (b[1].expiresAt || 0));
+
+    const overflow = this.requestCache.size - MAX_SHARED_CACHE_ENTRIES;
+    for (let i = 0; i < overflow && i < sorted.length; i++) {
+      this.requestCache.delete(sorted[i][0]);
+    }
+  },
+
+  getSharedCacheTtl(url) {
+    if (/\/jStations/i.test(url)) {
+      return 86400000;
+    }
+
+    if (/Incidents\.svc/i.test(url)) {
+      return 30000;
+    }
+
+    if (/NextBusService\.svc/i.test(url)) {
+      return 5000;
+    }
+
+    if (/StationPrediction\.svc/i.test(url)) {
+      return 5000;
+    }
+
+    return 10000;
+  },
+
   getJson(url) {
+    if (!this.getConfigBool("enableSharedApiCache", true)) {
+      return this.fetchJson(url);
+    }
+
+    const now = Date.now();
+    this.pruneRequestCache(now);
+    const ttl = this.getSharedCacheTtl(url);
+    const cached = this.requestCache.get(url);
+
+    if (cached && cached.data && cached.expiresAt > now) {
+      return Promise.resolve(cached.data);
+    }
+
+    if (cached && cached.promise) {
+      return cached.promise;
+    }
+
+    const promise = this.fetchJson(url)
+      .then((data) => {
+        this.requestCache.set(url, {
+          data,
+          expiresAt: Date.now() + ttl,
+          promise: null
+        });
+        return data;
+      })
+      .catch((error) => {
+        this.requestCache.delete(url);
+        throw error;
+      });
+
+    this.requestCache.set(url, {
+      data: cached ? cached.data : null,
+      expiresAt: cached ? cached.expiresAt : 0,
+      promise
+    });
+
+    return promise;
+  },
+
+  fetchJson(url) {
     const headers = {
       api_key: this.config.apiKey
     };

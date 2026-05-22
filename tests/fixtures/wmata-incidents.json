@@ -1,0 +1,14 @@
+{
+  "Incidents": [
+    {
+      "Description": "Minor delay on Red Line due to maintenance",
+      "LinesAffected": "RD;",
+      "StartDate": "2026-05-21T12:00:00-04:00",
+      "EndDate": "2026-05-21T16:00:00-04:00"
+    },
+    {
+      "Description": "No service between stations on Orange Line",
+      "LinesAffected": "OR;"
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "StopName": "14th St & Irving",
+  "Predictions": [
+    {
+      "RouteID": "52",
+      "DirectionText": "Silver Spring Station",
+      "Minutes": "5"
+    },
+    {
+      "RouteID": "54",
+      "DirectionText": "Metro Center",
+      "Minutes": "ARR"
+    }
+  ]
+}
