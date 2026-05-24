@@ -304,13 +304,13 @@ All other settings are optional and fall back to the defaults shown below.
 Run lint checks:
 
 ```bash
-npm run lint
+node --run lint
 ```
 
 Run tests (Node built-in test runner):
 
 ```bash
-npm test
+node --run test
 ```
 
 Fixture payloads for WMATA responses live under `tests/fixtures`.
