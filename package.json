@@ -21,6 +21,6 @@
     "train"
   ],
   "devDependencies": {
-    "eslint": "^10.4.0"
+    "eslint": "^10.4.1"
   }
 }
