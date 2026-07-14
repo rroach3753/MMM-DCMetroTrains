@@ -35,7 +35,7 @@ Current npm/package version is `3.0.0`. See [CHANGELOG.md](CHANGELOG.md) for the
 ## Requirements
 
 1. A working MagicMirror² installation.
-2. A WMATA API key from: https://developer.wmata.com/
+2. A WMATA API key from: <https://developer.wmata.com/>
 
 This module will not function without a valid API key.
 
@@ -354,12 +354,14 @@ stationCodes: [
 ```
 
 In that example:
+
 - `B35` uses the module-wide defaults.
 - `C01` gets its own card title, row count, compact layout, and grouping behavior.
 
 ### 2. How station objects are merged
 
 When you use an object inside `stationCodes`, the module reads the following station-specific values first:
+
 - `name`
 - `lineFilter`
 - `destinationIncludes`
@@ -373,6 +375,7 @@ When you use an object inside `stationCodes`, the module reads the following sta
 If a value is not present in the station object, the module falls back to the matching global setting.
 
 Important:
+
 - `lineFilter: []` means no line filtering for that station.
 - `destinationIncludes: []` means no destination filtering for that station.
 - `showIncidents` can be disabled for one station while staying enabled for the rest.
@@ -380,6 +383,7 @@ Important:
 ### 3. Filtering order
 
 The module filters trains in this order:
+
 1. WMATA data is loaded for the configured stations.
 2. Global line and destination filters are applied.
 3. Station-level line and destination filters are applied.
@@ -394,17 +398,20 @@ That means a station object can narrow the global data set, but it cannot re-add
 `groupByLine: false` shows a flat table.
 
 This can be set globally or per station:
+
 - Global `groupByLine` sets the default.
 - Station-level `groupByLine` overrides it for that one card.
 
 ### 5. Compact and commute behavior
 
 There are three related layout controls:
+
 - `compact`: forces compact layout all the time.
 - `autoCompact`: switches to compact layout only during commute windows.
 - `commuteMode`: enables the commute-window logic that drives the summary chip and compact mode.
 
 Recommended pattern:
+
 - Leave `commuteMode: true`.
 - Set `autoCompact: true` if you want the module to tighten up during commute periods.
 - Use `compact: true` only if you always want the smaller layout.
@@ -416,12 +423,14 @@ Recommended pattern:
 During quiet hours the module reduces visual noise by suppressing or minimizing some summary chips and animations. It does not stop live data updates.
 
 Typical use:
+
 - Keep daytime behavior normal.
 - Add late-night and early-morning windows in `quietHours.weekdays` and `quietHours.weekends`.
 
 ### 7. Incident controls
 
 These options control service alerts and how much room they take:
+
 - `showIncidents`: master on/off switch for the incident section.
 - `incidentSeverityFilter`: controls which severities are shown.
 - `onlyShowAlertsForVisibleLines`: only show alerts that match the lines currently visible in the station predictions.
@@ -431,6 +440,7 @@ These options control service alerts and how much room they take:
 - `incidentScrollSpeedMin`: enforces the minimum ticker cycle duration floor.
 
 Suggested setup:
+
 - Use `incidentSeverityFilter: "major"` or `"critical"` if you only want more serious disruptions.
 - Use `onlyShowAlertsForVisibleLines: true` if you want the alerts panel to stay relevant to your commute.
 - Keep `maxIncidentRows` low if the module is taking up too much vertical space.
@@ -438,6 +448,7 @@ Suggested setup:
 ### 8. Styling controls
 
 These options change the visual treatment rather than the data:
+
 - `showBorders`: removes module/card outlines when set to `false`.
 - `showBackground`: removes the translucent panel backgrounds when set to `false`.
 - `fontScale`: scales the whole module text size.
@@ -445,6 +456,7 @@ These options change the visual treatment rather than the data:
 - `showLastUpdated`: hides the bottom relative timestamp.
 
 Useful combinations:
+
 - Minimal card: `showBorders: false`, `showBackground: false`
 - Soft card: `showBorders: false`, `showBackground: true`
 - Dense display: `compact: true`, `fontScale: 0.9`
@@ -464,6 +476,7 @@ Useful combinations:
 If you want the older filled highlight-style badges without changing the color mode explicitly, set `showCarHighlights: true`.
 
 If you want the module to match a specific visual theme, the most common pairing is:
+
 - `etaColorMode: "gradient"`
 - `carsColorMode: "wmata"`
 
@@ -496,6 +509,7 @@ That example places Red and Blue ahead of the others, regardless of the default 
 ### 11. Title and fallback text
 
 `stationTitleFormat` controls how the card title is displayed:
+
 - `name` shows the station name.
 - `code` shows only the station code.
 - `nameWithCode` shows both.
@@ -503,6 +517,7 @@ That example places Red and Blue ahead of the others, regardless of the default 
 `fallbackMessage` changes the text shown when no arrivals are available.
 
 Use this if you want a friendlier message like:
+
 ```js
 fallbackMessage: "No trains right now"
 ```
@@ -514,6 +529,7 @@ fallbackMessage: "No trains right now"
 `updateJitterMs` adds a small random offset to refresh timing. This is useful if you run multiple mirrors or multiple transit modules and want to avoid all of them hitting the API at the exact same second.
 
 Recommended values:
+
 - `updateJitterMs: 0` for a single mirror or if you want fixed timing.
 - `updateJitterMs: 1000` to `3000` if you want softer refresh synchronization.
 
@@ -543,6 +559,7 @@ metroBusStops: [
 ```
 
 MetroBus behavior rules:
+
 - Global `metroBusRouteFilter` applies first.
 - Stop-level `routeFilter` can narrow routes for that stop.
 - Global `metroBusMaxRows` is the default row count.
@@ -570,7 +587,6 @@ stationCodes: ["A01", "C01"]
 Use station objects only when you need per-station differences.
 
 That keeps the config easier to read and reduces the chance of accidentally overriding a setting you meant to keep global.
-
 
 ## Screenshots
 

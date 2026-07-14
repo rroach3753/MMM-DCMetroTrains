@@ -7,12 +7,14 @@ The format is based on Keep a Changelog.
 ## [3.0.0] - 2026-05-22
 
 ### Upgrade Notes
+
 - This release formalizes breaking configuration removals introduced during the late 1.x cleanup cycle.
 - Remove deprecated weather options from existing configs: `showWeather`, `weatherLatitude`, `weatherLongitude`.
 - Remove deprecated first/last-train options from existing configs: `showFirstLastTrains`, `firstLastTrainMode`.
 - No direct replacement settings are required for those removed options.
 
 ### Added
+
 - Added a lightweight Node test harness (`npm test`) with baseline fixture validation for WMATA stations, predictions, incidents, and MetroBus payload shapes.
 - Added fixture files under `tests/fixtures` to support repeatable regression checks.
 - Added targeted helper regression coverage for shared-cache pruning and persisted snapshot timestamp restoration.
@@ -22,6 +24,7 @@ The format is based on Keep a Changelog.
 - Added a troubleshooting matrix to README for common runtime and API-state symptoms.
 
 ### Changed
+
 - Reworked retry behavior from fixed-delay retries to capped exponential backoff using `retryDelay` as the base delay.
 - Added degraded-mode state tracking and metadata flow from `node_helper` to frontend socket payloads.
 - Optimized summary ticker updates to refresh live countdown/freshness text nodes without forcing a full module DOM redraw every second.
@@ -31,13 +34,16 @@ The format is based on Keep a Changelog.
 - Added optional terminal-style direction labeling (`directionMode: "terminal"`).
 
 ### Removed
+
 - Removed the optional weather feature from both frontend rendering and backend fetch logic.
 - Removed weather-related configuration options (`showWeather`, `weatherLatitude`, `weatherLongitude`) and corresponding README documentation.
 
 ### Security
+
 - Added instance-scoped socket payload handling (`instanceId`) to reduce cross-instance data bleed in multi-instance MagicMirror deployments.
 
 ### Fixed
+
 - Added explicit WMATA request timeout handling in the shared JSON helper to avoid indefinite hangs on stalled upstream calls.
 - Expanded startup validation to cover additional numeric bounds (`stationRotationInterval`, `staleAfterSeconds`, `summaryCount`, `maxIncidentRows`, `incidentScrollSpeed`, `incidentScrollSpeedMin`, `fontScale`, `commuteMaxRows`, `animationSpeed`, `updateJitterMs`, `metroBusStopRotationInterval`, `walkBufferMinutes`, and `leaveNowWindowMinutes`) plus mode checks for `directionMode`.
 - Prevented transient API failures from blanking the module when previous data is available by preserving and rendering last-known-good in-memory data while retries are in progress.
@@ -46,6 +52,7 @@ The format is based on Keep a Changelog.
 ## [1.0.8] - 2026-05-08
 
 ### Fixed
+
 - Enforced startup config validation before initialization and surfaced clear runtime error messaging for invalid configuration.
 - Hardened incident/condition processing with additional null-safe guards (`incidents`, `predictions`, and `lineCodes`).
 - Corrected incident filtering logic in the browser module to avoid reassignment of immutable locals.
@@ -54,6 +61,7 @@ The format is based on Keep a Changelog.
 - Enforced and documented minimum bounds for `incidentsRefreshInterval` and `retryDelay` to prevent runaway scheduling.
 
 ### Changed
+
 - **Optimization Release (Passes 1-18)**: Comprehensive multi-pass code optimization and consolidation:
   - **Pass 1-4**: Safety fixes and dead code removal, removed unused error handlers and payload cleanup.
   - **Pass 5-7**: Advanced caching patterns, filter efficiency improvements, and array operation optimizations.
@@ -74,29 +82,35 @@ The format is based on Keep a Changelog.
 ## [1.0.7] - 2026-04-28
 
 ### Removed
+
 - Removed track column and `showTrack` configuration option. WMATA prediction API does not expose track information.
 
 ## [1.0.6] - 2026-04-28
 
 ### Changed
+
 - Cleanup release to align the module and release notes with the current 1.0.6 codebase.
 
 ## [1.0.5] - 2026-04-25
 
 ### Fixed
+
 - Resolved MagicMirror lint issues by removing a duplicate `socketNotificationReceived` key and clearing unused catch variables.
 
 ### Changed
+
 - Updated ESLint config to use `defineConfig` and aligned package metadata (`type`, `author`, and lint script style) with repository checks.
 
 ## [1.0.4] - 2026-04-24
 
 ### Changed
+
 - Bumped the development dependency on ESLint to 10.2.1 and refreshed the lockfile.
 
 ## [Pre-Release] - 2026-04-18 to 2026-04-20
 
 ### Day 1 AM - Initial Build and Core Feature Foundation
+
 - Started from a clean module request and scaffolded the full MagicMirror module structure:
   frontend module, node helper, stylesheet, README, package metadata, and ignore file.
 - Implemented core WMATA rail functionality:
@@ -104,6 +118,7 @@ The format is based on Keep a Changelog.
 - Expanded README to document all configuration options with required/optional status and defaults.
 
 ### Day 1 Midday - Advanced UX and Config Expansion
+
 - Added advanced display and commute features in iterative passes:
   next-train summary strip, quiet hours, commute compact logic, stale/freshness indicators, debug overlay, custom line order, fallback messaging, update jitter, and styling controls.
 - Added incident enhancements:
@@ -112,6 +127,7 @@ The format is based on Keep a Changelog.
   multiple car color modes, WMATA-oriented badge styling, and later compatibility behavior for users preferring the previous highlight style.
 
 ### Day 2 (PM) - UI Toggles, Integrations, and Stabilization
+
 - Added key visual toggles after user testing feedback:
   `showFreshnessChip`, `showBorders`, and `showBackground`.
 - Refined borderless/backgroundless behavior with stronger CSS and runtime class handling to ensure truly chrome-free rendering.
@@ -127,6 +143,7 @@ The format is based on Keep a Changelog.
 ## [1.0.1] - 2026-04-21
 
 ### Changed
+
 - Improved README structure and clarity for installation and configuration.
 - Added MMPM installation instructions.
 - Expanded screenshot/documentation coverage for easier setup and verification.
@@ -134,6 +151,7 @@ The format is based on Keep a Changelog.
 ## [1.0.0] - 2026-04-20
 
 ### Added
+
 - Initial public release of MMM-DCMetroTrains.
 - Live WMATA rail predictions for one or more configured stations.
 - Multi-station rotation support.
@@ -152,6 +170,7 @@ The format is based on Keep a Changelog.
 - Advanced configuration guide and full option reference in README.
 
 ### Fixed
+
 - Corrected a rendering/data-flow issue that could display `UNDEFINED` instead of arrival data.
 - Hardened borderless/backgroundless rendering behavior for true chrome-free layouts.
 - Updated WMATA car color mapping so 6-car trains use the appropriate medium (amber/yellow) color band.
