@@ -1080,7 +1080,10 @@ Module.register("MMM-DCMetroTrains", {
   },
 
   buildCarsCell(prediction) {
-    return makeEl("td", classNames("dcmetro__cars", this.getCarsClassForMode(prediction)), prediction.carsLabel);
+    const cell = makeEl("td");
+    const badge = makeEl("span", classNames("dcmetro__carsBadge", this.getCarsClassForMode(prediction)), prediction.carsLabel);
+    cell.appendChild(badge);
+    return cell;
   },
 
   buildStatusCell(prediction) {

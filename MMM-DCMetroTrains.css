@@ -482,7 +482,7 @@
   color: #ffb5b5;
 }
 
-.dcmetro__cars {
+.dcmetro__carsBadge {
   display: inline-flex;
   align-items: center;
   border-radius: 999px;
