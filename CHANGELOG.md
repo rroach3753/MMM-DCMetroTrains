@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 The format is based on Keep a Changelog.
 
+## [3.0.1] - 2026-07-14
+
+### Fixed
+
+- Flattened CARS column row-separator rendering by adjusting car badge vertical sizing, eliminating the curved/uneven underline artifact in compact/grouped tables.
+
 ## [3.0.0] - 2026-05-22
 
 ### Upgrade Notes

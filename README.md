@@ -30,7 +30,7 @@ A full-featured [MagicMirror²](https://github.com/MagicMirrorOrg/MagicMirror) m
 - Shared helper-side WMATA request cache and persistent last-known-good fallback
 - Exponential retry backoff with degraded-mode status when the API fails
 
-Current npm/package version is `3.0.0`. See [CHANGELOG.md](CHANGELOG.md) for the full release notes and upgrade details.
+Current npm/package version is `3.0.1`. See [CHANGELOG.md](CHANGELOG.md) for the full release notes and upgrade details.
 
 ## Requirements
 
