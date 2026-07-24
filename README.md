@@ -99,6 +99,23 @@ npm install
 
 Restart MagicMirror after updating.
 
+## Quick Start Config
+
+If you just want to get the module running, start with this minimal config in your `config/config.js`:
+
+```js
+{
+  module: "MMM-DCMetroTrains",
+  position: "top_right",
+  config: {
+    apiKey: "YOUR_WMATA_API_KEY",
+    stationCodes: ["A01"]
+  }
+}
+```
+
+You can expand from there once trains are rendering.
+
 ## Example Config
 
 Add this to your `config/config.js` file:
