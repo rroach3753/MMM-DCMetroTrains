@@ -11,6 +11,10 @@ The format is based on Keep a Changelog.
 - Updated README configuration examples to be directly pasteable into the MagicMirror modules array.
 - Updated ESLint to 10.8.1.
 
+### Fixed
+
+- Ignored the runtime snapshot cache so module updaters do not treat generated data as a local source change.
+
 ### Security
 
 - Updated the `brace-expansion` override to 5.0.9 to address a denial-of-service vulnerability.
