@@ -4,6 +4,17 @@ All notable changes to this project are documented in this file.
 
 The format is based on Keep a Changelog.
 
+## [Unreleased]
+
+### Changed
+
+- Updated README configuration examples to be directly pasteable into the MagicMirror modules array.
+- Updated ESLint to 10.8.1.
+
+### Security
+
+- Updated the `brace-expansion` override to 5.0.9 to address a denial-of-service vulnerability.
+
 ## [3.0.1] - 2026-07-14
 
 ### Fixed

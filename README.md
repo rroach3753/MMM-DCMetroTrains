@@ -115,7 +115,7 @@ Add this module block to your MagicMirror `config/config.js` file to get started
     apiKey: "YOUR_WMATA_API_KEY",
     stationCodes: ["A01"]
   }
-}
+},
 ```
 
 Then restart MagicMirror. You can expand from there once trains are rendering.
@@ -230,7 +230,7 @@ Add this to your `config/config.js` file:
     leaveNowWindowMinutes: 6,
     compact: false
   }
-}
+},
 ```
 
 ## Configuration Options
