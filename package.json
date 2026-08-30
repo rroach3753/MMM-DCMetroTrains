@@ -21,7 +21,7 @@
     "train"
   ],
   "devDependencies": {
-    "eslint": "^10.9.0",
+    "eslint": "^10.9.1",
     "markdownlint-cli2": "^0.23.2"
   },
   "overrides": {
