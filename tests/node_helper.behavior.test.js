@@ -117,3 +117,18 @@ test("snapshot restoration preserves fetched timestamp in outbound payload", () 
     assert.equal(emitted.payload.lastSuccessAt, 222222);
   });
 });
+
+test("server WMATA API key takes precedence over renderer config", () => {
+  const previousApiKey = process.env.WMATA_API_KEY;
+  process.env.WMATA_API_KEY = "server-key";
+
+  try {
+    assert.equal(helper.applyServerSecrets({ apiKey: "renderer-key" }).apiKey, "server-key");
+  } finally {
+    if (previousApiKey === undefined) {
+      delete process.env.WMATA_API_KEY;
+    } else {
+      process.env.WMATA_API_KEY = previousApiKey;
+    }
+  }
+});

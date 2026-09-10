@@ -18,6 +18,8 @@ The format is based on Keep a Changelog.
 ### Security
 
 - Updated the `brace-expansion` override to 5.0.9 to address a denial-of-service vulnerability.
+- Updated the `smol-toml` override to 1.8.0 to address a development-tool denial-of-service vulnerability.
+- Added server-only `WMATA_API_KEY` environment variable support.
 
 ## [3.0.1] - 2026-07-14
 

@@ -298,7 +298,7 @@ module.exports = NodeHelper.create({
       return;
     }
 
-    this.config = payload || {};
+    this.config = this.applyServerSecrets(payload || {});
     this.instanceId = this.config.instanceId || null;
 
     if (!this.validateConfig()) {
@@ -314,6 +314,13 @@ module.exports = NodeHelper.create({
     this.normalizedLineOrderCache = normalizeLineOrderToUpperCase(this.config.lineOrder);
 
     this.initialize();
+  },
+
+  applyServerSecrets(config) {
+    return {
+      ...config,
+      apiKey: process.env.WMATA_API_KEY || config.apiKey
+    };
   },
 
   async initialize() {

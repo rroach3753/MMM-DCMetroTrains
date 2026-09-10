@@ -314,6 +314,7 @@ All other settings are optional and fall back to the defaults shown below.
 
 ## Notes
 
+- To keep the WMATA key out of browser-side configuration, set `WMATA_API_KEY` in the MagicMirror process environment and omit `apiKey` from `config.js`. The server-side value takes precedence when both are present.
 - Direction labels default to WMATA group values (`1` = Northbound, `2` = Southbound). Set `directionMode: "terminal"` for `Toward <destination>` labels.
 - If incidents fail to load, train predictions continue to update normally.
 - If predictions fail after a successful fetch, the module keeps displaying last-known-good in-memory data and surfaces degraded-mode retry status.
