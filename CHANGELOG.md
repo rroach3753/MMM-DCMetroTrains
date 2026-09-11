@@ -9,7 +9,7 @@ The format is based on Keep a Changelog.
 ### Changed
 
 - Updated README configuration examples to be directly pasteable into the MagicMirror modules array.
-- Updated ESLint to 10.8.1.
+- Updated ESLint to 10.10.0.
 
 ### Fixed
 
