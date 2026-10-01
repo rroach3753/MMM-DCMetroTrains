@@ -121,6 +121,25 @@ function isEmpty(array) {
   return !array || !array.length;
 }
 
+async function mapWithConcurrency(items, concurrency, mapper) {
+  const results = new Array(items.length);
+  let nextIndex = 0;
+
+  const workers = Array.from(
+    { length: Math.min(Math.max(1, concurrency), items.length) },
+    async () => {
+      while (nextIndex < items.length) {
+        const index = nextIndex;
+        nextIndex += 1;
+        results[index] = await mapper(items[index], index);
+      }
+    }
+  );
+
+  await Promise.all(workers);
+  return results;
+}
+
 const NA_LINE = "NA";
 const SEVERITY_RANK = {
   all: 0,
@@ -131,6 +150,8 @@ const SEVERITY_RANK = {
 
 const MAX_RETRY_DELAY_MS = 300000;
 const MAX_SHARED_CACHE_ENTRIES = 64;
+const MAX_METROBUS_STOPS = 20;
+const METROBUS_FETCH_CONCURRENCY = 4;
 const SNAPSHOT_DIR = path.join(__dirname, ".cache");
 const SNAPSHOT_FILE = path.join(SNAPSHOT_DIR, "dcmetro-last-good.json");
 
@@ -144,6 +165,7 @@ module.exports = NodeHelper.create({
     this.latestIncidents = [];
     this.latestStations = [];
     this.latestBusStops = [];
+    this.latestPredictions = [];
     this.stationProfiles = [];
     this.busStopProfiles = [];
     this.stationCodesByName = {};
@@ -156,9 +178,13 @@ module.exports = NodeHelper.create({
     this.lastErrorCode = null;
     this.requestCache = new Map();
     this.snapshotLoaded = false;
+    this.stopped = true;
+    this.lifecycleGeneration = 0;
   },
 
   stop() {
+    this.stopped = true;
+    this.lifecycleGeneration += 1;
     this.stopTimers();
     this.clearRetryTimer();
   },
@@ -188,6 +214,26 @@ module.exports = NodeHelper.create({
 
       if (hasInvalidEntry) {
         errors.push("stationCodes contains an empty or invalid station code entry");
+      }
+    }
+
+    if (config.metroBusStops != null && !Array.isArray(config.metroBusStops)) {
+      errors.push("metroBusStops must be an array");
+    }
+
+    if (Array.isArray(config.metroBusStops)) {
+      const hasInvalidStop = config.metroBusStops.some((entry) => {
+        const isObject = entry && typeof entry === "object" && !Array.isArray(entry);
+        const stopId = isObject ? entry.stopId || entry.id || entry.code : entry;
+        return !String(stopId || "").trim();
+      });
+
+      if (hasInvalidStop) {
+        errors.push("metroBusStops contains an empty or invalid stop entry");
+      }
+
+      if (config.metroBusStops.length > MAX_METROBUS_STOPS) {
+        errors.push(`metroBusStops must contain no more than ${MAX_METROBUS_STOPS} stops`);
       }
     }
 
@@ -313,7 +359,9 @@ module.exports = NodeHelper.create({
     this.busStopProfiles = this.resolveMetroBusStopProfiles();
     this.normalizedLineOrderCache = normalizeLineOrderToUpperCase(this.config.lineOrder);
 
-    this.initialize();
+    this.stopped = false;
+    this.lifecycleGeneration += 1;
+    this.initialize(this.lifecycleGeneration);
   },
 
   applyServerSecrets(config) {
@@ -323,7 +371,15 @@ module.exports = NodeHelper.create({
     };
   },
 
-  async initialize() {
+  isLifecycleActive(generation) {
+    return !this.stopped && generation === this.lifecycleGeneration;
+  },
+
+  async initialize(generation = this.lifecycleGeneration) {
+    if (!this.isLifecycleActive(generation)) {
+      return;
+    }
+
     this.stopTimers();
     this.clearRetryTimer();
     this.loadPersistedSnapshot();
@@ -332,17 +388,28 @@ module.exports = NodeHelper.create({
       if (this.isMetroBusOnlyMode()) {
         this.stationMap = {};
       } else {
-        await this.fetchStations();
+        await this.fetchStations(generation);
+        if (!this.isLifecycleActive(generation)) {
+          return;
+        }
         this.validateStationProfiles();
       }
-      const predictionsOk = await this.refreshPredictionsAndWeather();
-      if (predictionsOk) {
-        await this.refreshIncidents();
+      const predictionsOk = await this.refreshPredictionsAndWeather(generation);
+      if (!this.isLifecycleActive(generation)) {
+        return;
       }
-      this.scheduleNextPredictionRefresh();
-      this.scheduleNextIncidentRefresh();
+      if (predictionsOk) {
+        await this.refreshIncidents(generation);
+        if (!this.isLifecycleActive(generation)) {
+          return;
+        }
+      }
+      this.scheduleNextPredictionRefresh(generation);
+      this.scheduleNextIncidentRefresh(generation);
     } catch (error) {
-      this.handleRefreshFailure(error, "initialize");
+      if (this.isLifecycleActive(generation)) {
+        this.handleRefreshFailure(error, "initialize", generation);
+      }
     }
   },
 
@@ -358,23 +425,43 @@ module.exports = NodeHelper.create({
     }
   },
 
-  scheduleNextPredictionRefresh() {
+  scheduleNextPredictionRefresh(generation = this.lifecycleGeneration) {
+    if (!this.isLifecycleActive(generation)) {
+      return;
+    }
+
     const interval = Math.max(5000, this.getConfigNumber("refreshInterval", 30000));
     this.fetchTimer = setTimeout(async () => {
-      await this.refreshPredictionsAndWeather();
+      this.fetchTimer = null;
+      if (!this.isLifecycleActive(generation)) {
+        return;
+      }
+
+      await this.refreshPredictionsAndWeather(generation);
 
       // Retry timer takes over scheduling when prediction refreshes fail.
-      if (!this.retryTimer) {
-        this.scheduleNextPredictionRefresh();
+      if (this.isLifecycleActive(generation) && !this.retryTimer) {
+        this.scheduleNextPredictionRefresh(generation);
       }
     }, this.withJitter(interval));
   },
 
-  scheduleNextIncidentRefresh() {
+  scheduleNextIncidentRefresh(generation = this.lifecycleGeneration) {
+    if (!this.isLifecycleActive(generation)) {
+      return;
+    }
+
     const interval = Math.max(5000, this.getConfigNumber("incidentsRefreshInterval", 120000));
     this.incidentTimer = setTimeout(async () => {
-      await this.refreshIncidents();
-      this.scheduleNextIncidentRefresh();
+      this.incidentTimer = null;
+      if (!this.isLifecycleActive(generation)) {
+        return;
+      }
+
+      await this.refreshIncidents(generation);
+      if (this.isLifecycleActive(generation)) {
+        this.scheduleNextIncidentRefresh(generation);
+      }
     }, this.withJitter(interval));
   },
 
@@ -392,11 +479,20 @@ module.exports = NodeHelper.create({
     this.clearTimer("retryTimer");
   },
 
-  scheduleRetry(source) {
+  scheduleRetry(source, generation = this.lifecycleGeneration) {
+    if (!this.isLifecycleActive(generation)) {
+      return;
+    }
+
     this.clearRetryTimer();
     const baseRetryDelay = Math.max(1000, this.getConfigNumber("retryDelay", 15000));
     const retryDelay = Math.min(MAX_RETRY_DELAY_MS, baseRetryDelay * Math.pow(2, Math.max(0, this.retryAttempt - 1)));
-    this.retryTimer = setTimeout(() => this.initialize(), retryDelay);
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null;
+      if (this.isLifecycleActive(generation)) {
+        this.initialize(generation);
+      }
+    }, retryDelay);
 
     this.reportError(`DC Metro update failed (${source}). Retrying in ${Math.round(retryDelay / 1000)}s.`, {
       degradedMode: this.degradedMode,
@@ -419,13 +515,17 @@ module.exports = NodeHelper.create({
     });
   },
 
-  handleRefreshFailure(error, source) {
+  handleRefreshFailure(error, source, generation = this.lifecycleGeneration) {
+    if (!this.isLifecycleActive(generation)) {
+      return;
+    }
+
     this.retryAttempt += 1;
     this.degradedMode = true;
     this.lastErrorMessage = error.message;
     this.lastErrorCode = this.classifyErrorCode(error);
     this.tryRestoreFromSnapshot(source);
-    this.scheduleRetry(source);
+    this.scheduleRetry(source, generation);
   },
 
   markRefreshHealthy() {
@@ -502,19 +602,27 @@ module.exports = NodeHelper.create({
     });
   },
 
-  async refreshPredictionsAndWeather() {
+  async refreshPredictionsAndWeather(generation = this.lifecycleGeneration) {
+    if (!this.isLifecycleActive(generation)) {
+      return false;
+    }
+
     try {
       const metroBusOnly = this.isMetroBusOnlyMode();
       const [predictions, busStops] = await Promise.all([
         metroBusOnly ? Promise.resolve([]) : this.fetchPredictions(),
         this.fetchMetroBusPredictions()
       ]);
+      if (!this.isLifecycleActive(generation)) {
+        return false;
+      }
 
       // Build complete data set before updating module state (atomic update)
       const grouped = this.groupPredictionsByStation(predictions);
       const newStations = metroBusOnly ? [] : this.buildStationPayload(grouped, this.latestIncidents);
 
       // Update state atomically
+      this.latestPredictions = predictions;
       this.latestBusStops = busStops;
       this.latestStations = newStations;
       this.markRefreshHealthy();
@@ -523,27 +631,53 @@ module.exports = NodeHelper.create({
       this.broadcastData();
       return true;
     } catch (error) {
-      this.handleRefreshFailure(error, "predictions");
+      if (this.isLifecycleActive(generation)) {
+        this.handleRefreshFailure(error, "predictions", generation);
+      }
       return false;
     }
   },
 
-  async refreshIncidents() {
-    try {
-      this.latestIncidents = await this.fetchIncidents();
+  applyIncidentUpdate(incidents) {
+    const grouped = this.groupPredictionsByStation(this.latestPredictions);
+    const stations = this.isMetroBusOnlyMode()
+      ? []
+      : this.buildStationPayload(grouped, incidents);
 
-      if (this.latestStations.length) {
-        this.broadcastData();
+    this.latestIncidents = incidents;
+    this.latestStations = stations;
+    this.persistLastGoodSnapshot();
+    this.broadcastData();
+  },
+
+  async refreshIncidents(generation = this.lifecycleGeneration) {
+    if (!this.isLifecycleActive(generation)) {
+      return;
+    }
+
+    try {
+      const incidents = await this.fetchIncidents();
+      if (!this.isLifecycleActive(generation)) {
+        return;
       }
+
+      this.applyIncidentUpdate(incidents);
     } catch (error) {
+      if (!this.isLifecycleActive(generation)) {
+        return;
+      }
+
       console.warn("[MMM-DCMetroTrains] Failed to refresh incidents:", error.message);
-      this.latestIncidents = [];
+      this.applyIncidentUpdate([]);
     }
   },
 
-  async fetchStations() {
+  async fetchStations(generation = this.lifecycleGeneration) {
     const url = "https://api.wmata.com/Rail.svc/json/jStations";
     const response = await this.getJson(url);
+    if (!this.isLifecycleActive(generation)) {
+      return;
+    }
     const stations = response.Stations || [];
 
     this.stationMap = {};
@@ -673,7 +807,7 @@ module.exports = NodeHelper.create({
   },
 
   resolveMetroBusStopProfiles() {
-    const configuredStops = ensureArray(this.config.metroBusStops);
+    const configuredStops = ensureArray(this.config.metroBusStops).slice(0, MAX_METROBUS_STOPS);
 
     return configuredStops
       .map((entry, index) => this.normalizeMetroBusStopProfile(entry, index))
@@ -708,7 +842,7 @@ module.exports = NodeHelper.create({
       return [];
     }
 
-    const stops = await Promise.all(stopProfiles.map(async (profile) => {
+    const stops = await mapWithConcurrency(stopProfiles, METROBUS_FETCH_CONCURRENCY, async (profile) => {
       try {
         const url = `https://api.wmata.com/NextBusService.svc/json/jPredictions?StopID=${encodeURIComponent(profile.stopId)}`;
         const response = await this.getJson(url);
@@ -754,7 +888,7 @@ module.exports = NodeHelper.create({
           rotate: profile.rotate
         };
       }
-    }));
+    });
 
     const priorityMap = new Map(stopProfiles.map((item) => [item.stopId, item.priority]));
     return stops.sort((a, b) => (priorityMap.get(a.stopId) ?? 0) - (priorityMap.get(b.stopId) ?? 0));

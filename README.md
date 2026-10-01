@@ -292,7 +292,7 @@ All other settings are optional and fall back to the defaults shown below.
 | `showMetroBusHeader` | Boolean | No | `true` | Shows or hides the MetroBus section header label. |
 | `metroBusRotateStops` | Boolean | No | `false` | Enables MetroBus stop-card rotation when multiple stops are configured. |
 | `metroBusStopRotationInterval` | Number | No | `15000` | MetroBus stop-card rotation interval in milliseconds. Must be >= `2000`. |
-| `metroBusStops` | Array<String or Object> | No | `[]` | MetroBus stop IDs. Supports string IDs or object entries with `stopId`, `name`, `routeFilter`, `maxRows`, and `priority`. |
+| `metroBusStops` | Array<String or Object> | No | `[]` | MetroBus stop IDs. Supports string IDs or object entries with `stopId`, `name`, `routeFilter`, `maxRows`, and `priority`. Limited to 20 valid, non-empty entries. |
 | `metroBusMaxRows` | Number | No | `5` | Maximum buses shown per stop card (unless a stop-level `maxRows` overrides it). |
 | `metroBusRouteFilter` | Array<String> | No | `[]` | Global MetroBus route filter; empty means all routes. |
 | `staleAfterSeconds` | Number | No | `180` | Time threshold used to mark the feed as stale in the freshness indicators. Must be >= `1`. |
@@ -584,6 +584,7 @@ metroBusStops: [
 
 MetroBus behavior rules:
 
+- Up to 20 valid, non-empty stops can be configured; stop prediction requests run four at a time.
 - Global `metroBusRouteFilter` applies first.
 - Stop-level `routeFilter` can narrow routes for that stop.
 - Global `metroBusMaxRows` is the default row count.

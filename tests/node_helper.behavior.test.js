@@ -132,3 +132,138 @@ test("server WMATA API key takes precedence over renderer config", () => {
     }
   }
 });
+
+test("incident refresh rebuilds, persists, and broadcasts derived station data", async () => {
+  helper.start();
+  helper.stopped = false;
+  helper.lifecycleGeneration = 1;
+  helper.config = { metroBusOnlyMode: false };
+  helper.latestPredictions = [{ LocationCode: "A01" }];
+
+  const incidents = [{ description: "Red Line delay" }];
+  const originalFetchIncidents = helper.fetchIncidents;
+  const originalGroupPredictions = helper.groupPredictionsByStation;
+  const originalBuildStationPayload = helper.buildStationPayload;
+  const originalPersistLastGoodSnapshot = helper.persistLastGoodSnapshot;
+  const originalBroadcastData = helper.broadcastData;
+  let persisted = 0;
+  let broadcast = 0;
+
+  helper.fetchIncidents = async () => incidents;
+  helper.groupPredictionsByStation = (predictions) => {
+    assert.equal(predictions, helper.latestPredictions);
+    return { A01: predictions };
+  };
+  helper.buildStationPayload = (grouped, currentIncidents) => [{
+    grouped,
+    incidents: currentIncidents
+  }];
+  helper.persistLastGoodSnapshot = () => {
+    persisted += 1;
+  };
+  helper.broadcastData = () => {
+    broadcast += 1;
+  };
+
+  try {
+    await helper.refreshIncidents(1);
+
+    assert.equal(helper.latestIncidents, incidents);
+    assert.equal(helper.latestStations[0].incidents, incidents);
+    assert.equal(helper.latestStations[0].grouped.A01, helper.latestPredictions);
+    assert.equal(persisted, 1);
+    assert.equal(broadcast, 1);
+  } finally {
+    helper.fetchIncidents = originalFetchIncidents;
+    helper.groupPredictionsByStation = originalGroupPredictions;
+    helper.buildStationPayload = originalBuildStationPayload;
+    helper.persistLastGoodSnapshot = originalPersistLastGoodSnapshot;
+    helper.broadcastData = originalBroadcastData;
+  }
+});
+
+test("completed async refresh does not restart prediction timer after stop", async () => {
+  helper.start();
+  helper.stopped = false;
+  helper.lifecycleGeneration = 7;
+  helper.config = {
+    refreshInterval: 5000,
+    updateJitterMs: 0
+  };
+
+  const originalSetTimeout = global.setTimeout;
+  const originalClearTimeout = global.clearTimeout;
+  const originalRefresh = helper.refreshPredictionsAndWeather;
+  const scheduledCallbacks = [];
+  let finishRefresh;
+
+  global.setTimeout = (callback) => {
+    scheduledCallbacks.push(callback);
+    return { callback };
+  };
+  global.clearTimeout = () => {};
+  helper.refreshPredictionsAndWeather = () => new Promise((resolve) => {
+    finishRefresh = resolve;
+  });
+
+  try {
+    helper.scheduleNextPredictionRefresh(7);
+    assert.equal(scheduledCallbacks.length, 1);
+
+    const pendingCallback = scheduledCallbacks[0]();
+    helper.stop();
+    finishRefresh(true);
+    await pendingCallback;
+
+    assert.equal(scheduledCallbacks.length, 1);
+    assert.equal(helper.fetchTimer, null);
+  } finally {
+    global.setTimeout = originalSetTimeout;
+    global.clearTimeout = originalClearTimeout;
+    helper.refreshPredictionsAndWeather = originalRefresh;
+  }
+});
+
+test("Metrobus stop validation caps profiles and fetches at bounded concurrency", async () => {
+  helper.start();
+  const configuredStops = Array.from({ length: 25 }, (_, index) => `stop-${index}`);
+  helper.config = {
+    apiKey: "test-key",
+    showMetroBus: true,
+    metroBusOnlyMode: false,
+    metroBusStops: configuredStops,
+    metroBusMaxRows: 5,
+    metroBusRouteFilter: []
+  };
+
+  const originalConsoleError = console.error;
+  console.error = () => {};
+  try {
+    assert.equal(helper.validateConfig(), false);
+  } finally {
+    console.error = originalConsoleError;
+  }
+
+  helper.busStopProfiles = helper.resolveMetroBusStopProfiles();
+  assert.equal(helper.busStopProfiles.length, 20);
+
+  const originalGetJson = helper.getJson;
+  let activeRequests = 0;
+  let maxActiveRequests = 0;
+
+  helper.getJson = async () => {
+    activeRequests += 1;
+    maxActiveRequests = Math.max(maxActiveRequests, activeRequests);
+    await new Promise((resolve) => setImmediate(resolve));
+    activeRequests -= 1;
+    return { Predictions: [] };
+  };
+
+  try {
+    const stops = await helper.fetchMetroBusPredictions();
+    assert.equal(stops.length, 20);
+    assert.equal(maxActiveRequests, 4);
+  } finally {
+    helper.getJson = originalGetJson;
+  }
+});
