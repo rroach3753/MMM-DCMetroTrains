@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const Module = require("node:module");
+const vm = require("node:vm");
 
 const originalLoad = Module._load;
 Module._load = function (request, parent, isMain) {
@@ -22,6 +23,21 @@ Module._load = originalLoad;
 const ROOT = path.resolve(__dirname, "..");
 const SNAPSHOT_DIR = path.join(ROOT, ".cache");
 const SNAPSHOT_FILE = path.join(SNAPSHOT_DIR, "dcmetro-last-good.json");
+
+function loadFrontendModule() {
+  const source = fs.readFileSync(path.join(ROOT, "MMM-DCMetroTrains.js"), "utf8");
+  let definition;
+  vm.runInNewContext(source, {
+    Module: {
+      register(name, moduleDefinition) {
+        definition = moduleDefinition;
+      }
+    },
+    Intl,
+    console
+  });
+  return definition;
+}
 
 function withSnapshotFile(snapshotContent, runAssertions) {
   const hadSnapshot = fs.existsSync(SNAPSHOT_FILE);
@@ -118,12 +134,35 @@ test("snapshot restoration preserves fetched timestamp in outbound payload", () 
   });
 });
 
-test("server WMATA API key takes precedence over renderer config", () => {
+test("frontend omits the WMATA API key from its socket payload", () => {
+  const definition = loadFrontendModule();
+  let requestPayload;
+  const moduleInstance = Object.assign({}, definition, {
+    config: Object.assign({}, definition.defaults, { apiKey: "renderer-key" }),
+    identifier: "test-instance",
+    sendSocketNotification(notification, payload) {
+      if (notification === "DC_METRO_CONFIG") {
+        requestPayload = payload;
+      }
+    },
+    startRotation() {},
+    startBusRotation() {},
+    startUiTicker() {}
+  });
+
+  moduleInstance.start();
+
+  assert.equal(Object.hasOwn(requestPayload, "apiKey"), false);
+});
+
+test("WMATA API key is accepted only from the server environment", () => {
   const previousApiKey = process.env.WMATA_API_KEY;
   process.env.WMATA_API_KEY = "server-key";
 
   try {
     assert.equal(helper.applyServerSecrets({ apiKey: "renderer-key" }).apiKey, "server-key");
+    delete process.env.WMATA_API_KEY;
+    assert.equal(helper.applyServerSecrets({ apiKey: "renderer-key" }).apiKey, "");
   } finally {
     if (previousApiKey === undefined) {
       delete process.env.WMATA_API_KEY;

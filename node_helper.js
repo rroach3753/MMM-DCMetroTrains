@@ -194,7 +194,7 @@ module.exports = NodeHelper.create({
     const config = this.config || {};
 
     if (!config.apiKey) {
-      errors.push("Missing apiKey");
+      errors.push("Missing WMATA_API_KEY");
     }
 
     if (config.stationCodes != null && !Array.isArray(config.stationCodes) && typeof config.stationCodes !== "string") {
@@ -367,7 +367,7 @@ module.exports = NodeHelper.create({
   applyServerSecrets(config) {
     return {
       ...config,
-      apiKey: process.env.WMATA_API_KEY || config.apiKey
+      apiKey: String(process.env.WMATA_API_KEY || "").trim()
     };
   },
 

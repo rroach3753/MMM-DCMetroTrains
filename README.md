@@ -107,14 +107,18 @@ Add this module block to your MagicMirror `config/config.js` file to get started
 
 1. Install the module in your `MagicMirror/modules` folder.
 2. Add this module block to the modules array in `config/config.js`.
-3. Save and restart MagicMirror.
+3. Set `WMATA_API_KEY` in the environment used to start MagicMirror.
+4. Save and restart MagicMirror.
+
+```bash
+export WMATA_API_KEY="YOUR_WMATA_API_KEY"
+```
 
 ```js
 {
   module: "MMM-DCMetroTrains",
   position: "top_right",
   config: {
-    apiKey: "YOUR_WMATA_API_KEY",
     stationCodes: ["A01"]
   }
 },
@@ -131,7 +135,6 @@ Add this to your `config/config.js` file:
   module: "MMM-DCMetroTrains",
   position: "top_right",
   config: {
-    apiKey: "YOUR_WMATA_API_KEY",
     stationCodes: [
       "A01",
       {
@@ -237,15 +240,14 @@ Add this to your `config/config.js` file:
 
 ## Configuration Options
 
-Only one setting is required:
+One server environment variable is required:
 
-- `apiKey` must be set to a valid WMATA API key.
+- `WMATA_API_KEY` must be set to a valid WMATA API key before starting MagicMirror.
 
-All other settings are optional and fall back to the defaults shown below.
+All browser-side module settings are optional and fall back to the defaults shown below.
 
 | Option | Type | Required? | Default | What it does |
 | --- | --- | --- | --- | --- |
-| `apiKey` | String | Yes | `""` | WMATA API key used for all API requests. Module will show an error until this is set. |
 | `stationCodes` | Array<String or Object> or String | No | `["A01"]` | Station codes to query. You can provide an array (recommended) or a single string code. Values are trimmed and must not be empty. Each array entry can be a string code or an object with per-station overrides such as `name`, `lineFilter`, `destinationIncludes`, `maxRows`, `compact`, `groupByLine`, `showIncidents`, and `alerts`. |
 | `refreshInterval` | Number | No | `30000` | How often train predictions refresh, in milliseconds. Must be >= `5000`. |
 | `incidentsRefreshInterval` | Number | No | `120000` | How often service incidents refresh, in milliseconds. Must be >= `5000`. |
@@ -314,7 +316,7 @@ All other settings are optional and fall back to the defaults shown below.
 
 ## Notes
 
-- To keep the WMATA key out of browser-side configuration, set `WMATA_API_KEY` in the MagicMirror process environment and omit `apiKey` from `config.js`. The server-side value takes precedence when both are present.
+- The WMATA key is accepted only through `WMATA_API_KEY` in the MagicMirror process environment. Renderer-supplied `apiKey` values are ignored.
 - Direction labels default to WMATA group values (`1` = Northbound, `2` = Southbound). Set `directionMode: "terminal"` for `Toward <destination>` labels.
 - If incidents fail to load, train predictions continue to update normally.
 - If predictions fail after a successful fetch, the module keeps displaying last-known-good in-memory data and surfaces degraded-mode retry status.

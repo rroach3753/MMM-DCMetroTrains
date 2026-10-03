@@ -187,7 +187,6 @@ function formatCountdown(msRemaining) {
 }
 Module.register("MMM-DCMetroTrains", {
   defaults: {
-    apiKey: "",
     stationCodes: ["A01"],
     refreshInterval: 30000,
     incidentsRefreshInterval: 120000,
@@ -334,8 +333,10 @@ Module.register("MMM-DCMetroTrains", {
     this.lastRefreshAt = null;
     this.liveSummaryNodes = {};
 
+    const publicConfig = { ...this.config };
+    delete publicConfig.apiKey;
     this.sendSocketNotification("DC_METRO_CONFIG", {
-      ...this.config,
+      ...publicConfig,
       instanceId: this.instanceId
     });
     this.startRotation();

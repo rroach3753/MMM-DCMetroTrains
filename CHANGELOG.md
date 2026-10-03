@@ -19,7 +19,11 @@ The format is based on Keep a Changelog.
 
 - Updated the `brace-expansion` override to 5.0.9 to address a denial-of-service vulnerability.
 - Updated the `smol-toml` override to 1.8.0 to address a development-tool denial-of-service vulnerability.
-- Added server-only `WMATA_API_KEY` environment variable support.
+- Required the server-only `WMATA_API_KEY` environment variable and removed the renderer API-key fallback and socket exposure.
+
+### Changed
+
+- Existing installations must move the WMATA API key from `config.js` to the MagicMirror process environment.
 
 ## [3.0.1] - 2026-07-14
 
