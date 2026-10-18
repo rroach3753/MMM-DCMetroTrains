@@ -24,6 +24,38 @@ const ROOT = path.resolve(__dirname, "..");
 const SNAPSHOT_DIR = path.join(ROOT, ".cache");
 const SNAPSHOT_FILE = path.join(SNAPSHOT_DIR, "dcmetro-last-good.json");
 
+test("malformed socket values are rejected without uncaught coercion errors", () => {
+  helper.start();
+  const originalSend = helper.sendSocketNotification;
+  const originalKey = process.env.WMATA_API_KEY;
+  const sent = [];
+  helper.sendSocketNotification = (notification, payload) => sent.push({ notification, payload });
+  process.env.WMATA_API_KEY = "test-key";
+  try {
+    for (const payload of [
+      [],
+      "invalid",
+      { stationCodes: [{ code: { toString: null } }] },
+      { refreshInterval: { valueOf: null, toString: null } },
+      { lineOrder: [{ toString: null }] }
+    ]) {
+      assert.doesNotThrow(() => helper.socketNotificationReceived("DC_METRO_CONFIG", payload));
+      assert.equal(sent.at(-1).notification, "DC_METRO_ERROR");
+      assert.equal(helper.config, null);
+    }
+    helper.config = { updateJitterMs: Number.MAX_VALUE };
+    for (let index = 0; index < 10; index++) {
+      const delay = helper.withJitter(Number.MAX_VALUE);
+      assert.ok(Number.isFinite(delay) && delay >= 1000 && delay <= 2147483647);
+    }
+  } finally {
+    helper.stop();
+    helper.sendSocketNotification = originalSend;
+    if (originalKey === undefined) delete process.env.WMATA_API_KEY;
+    else process.env.WMATA_API_KEY = originalKey;
+  }
+});
+
 function loadFrontendModule() {
   const source = fs.readFileSync(path.join(ROOT, "MMM-DCMetroTrains.js"), "utf8");
   let definition;

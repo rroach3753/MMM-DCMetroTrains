@@ -189,9 +189,13 @@ module.exports = NodeHelper.create({
     this.clearRetryTimer();
   },
 
-  validateConfig() {
+  validateConfig(config = this.config || {}) {
     const errors = [];
-    const config = this.config || {};
+
+    if (config.instanceId != null &&
+        (typeof config.instanceId !== "string" || !/^[A-Za-z0-9._:-]{1,128}$/.test(config.instanceId))) {
+      errors.push("instanceId must be a valid module routing ID");
+    }
 
     if (!config.apiKey) {
       errors.push("Missing WMATA_API_KEY");
@@ -344,17 +348,43 @@ module.exports = NodeHelper.create({
       return;
     }
 
-    this.config = this.applyServerSecrets(payload || {});
-    this.instanceId = this.config.instanceId || null;
-
-    if (!this.validateConfig()) {
+    const previousConfig = this.config;
+    const previousInstanceId = this.instanceId;
+    const previousStationProfiles = this.stationProfiles;
+    const previousBusStopProfiles = this.busStopProfiles;
+    const previousLineOrder = this.normalizedLineOrderCache;
+    try {
+      if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+        throw new Error("Configuration must be an object.");
+      }
+      this.configureFromSocket(payload);
+    } catch {
+      this.config = previousConfig;
+      this.instanceId = previousInstanceId;
+      this.stationProfiles = previousStationProfiles;
+      this.busStopProfiles = previousBusStopProfiles;
+      this.normalizedLineOrderCache = previousLineOrder;
+      console.error("[MMM-DCMetroTrains] Rejected malformed socket configuration.");
       this.sendSocketNotification("DC_METRO_ERROR", {
-        instanceId: this.instanceId,
+        instanceId: typeof payload?.instanceId === "string" ? payload.instanceId : null,
+        error: "Invalid MMM-DCMetroTrains configuration. Check server logs for details."
+      });
+    }
+  },
+
+  configureFromSocket(payload) {
+    const config = this.applyServerSecrets(payload);
+
+    if (!this.validateConfig(config)) {
+      this.sendSocketNotification("DC_METRO_ERROR", {
+        instanceId: typeof config.instanceId === "string" ? config.instanceId : null,
         error: "Invalid MMM-DCMetroTrains configuration. Check server logs for details."
       });
       return;
     }
 
+    this.config = config;
+    this.instanceId = config.instanceId || null;
     this.stationProfiles = this.resolveStationProfiles();
     this.busStopProfiles = this.resolveMetroBusStopProfiles();
     this.normalizedLineOrderCache = normalizeLineOrderToUpperCase(this.config.lineOrder);
@@ -466,13 +496,14 @@ module.exports = NodeHelper.create({
   },
 
   withJitter(baseInterval) {
-    const jitter = Math.max(0, this.getConfigNumber("updateJitterMs", 0));
+    baseInterval = Math.min(2147483647, Math.max(1000, baseInterval));
+    const jitter = Math.min(2147483647, Math.max(0, this.getConfigNumber("updateJitterMs", 0)));
     if (!jitter) {
       return baseInterval;
     }
 
     const delta = Math.floor(Math.random() * (jitter * 2 + 1)) - jitter;
-    return Math.max(1000, baseInterval + delta);
+    return Math.min(2147483647, Math.max(1000, baseInterval + delta));
   },
 
   clearRetryTimer() {

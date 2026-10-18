@@ -324,6 +324,9 @@ All browser-side module settings are optional and fall back to the defaults show
 - If you want station-specific behavior, use object entries inside `stationCodes` instead of only string codes.
 - For best results, keep `refreshInterval` at 20-60 seconds to avoid excessive API usage.
 - Invalid config values are rejected at startup with a visible module error and detailed server-side log message.
+- Malformed socket configurations cannot replace an active valid configuration
+  or escape the helper's error boundary. Backend timer delays are capped at the
+  Node.js timer maximum to prevent overflow into rapid polling.
 
 ## Testing
 
