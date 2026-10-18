@@ -66,7 +66,15 @@ function loadFrontendModule() {
       }
     },
     Intl,
-    console
+    console,
+    document: {
+      createElement() {
+        return {
+          children: [], textContent: "", style: {}, classList: { add() {} },
+          appendChild(child) { this.children.push(child); }
+        };
+      }
+    }
   });
   return definition;
 }
@@ -187,6 +195,30 @@ test("frontend omits the WMATA API key from its socket payload", () => {
   assert.equal(Object.hasOwn(requestPayload, "apiKey"), false);
 });
 
+test("frontend preserves grouped and flat arrivals and handles empty predictions", () => {
+  const definition = loadFrontendModule();
+  const renderer = {
+    ...definition,
+    config: { ...definition.defaults, showDirection: false, showCars: false, showStatus: false }
+  };
+  const station = {
+    profile: {},
+    predictions: [
+      { line: "RD", destination: "Glenmont", displayMinutes: "5", minutesSort: 5, statusClass: "normal", alerts: [] },
+      { line: "RD", destination: "Shady Grove", displayMinutes: "2", minutesSort: 2, statusClass: "normal", alerts: [] }
+    ]
+  };
+  const text = (element) => [element.textContent, ...element.children.map(text)].join(" ");
+  const grouped = renderer.buildArrivals(station, false);
+  assert.equal(grouped.className, "dcmetro__groups");
+  assert.match(text(grouped), /2 trains/);
+  assert.ok(text(grouped).indexOf("Shady Grove") < text(grouped).indexOf("Glenmont"));
+  renderer.config.groupByLine = false;
+  assert.match(renderer.buildArrivals(station, false).className, /dcmetro__table--flat/);
+  station.predictions = [];
+  assert.match(text(renderer.buildArrivals(station, false)), /No upcoming trains/);
+});
+
 test("WMATA API key is accepted only from the server environment", () => {
   const previousApiKey = process.env.WMATA_API_KEY;
   process.env.WMATA_API_KEY = "server-key";
@@ -264,7 +296,7 @@ test("completed async refresh does not restart prediction timer after stop", asy
 
   const originalSetTimeout = global.setTimeout;
   const originalClearTimeout = global.clearTimeout;
-  const originalRefresh = helper.refreshPredictionsAndWeather;
+  const originalRefresh = helper.refreshPredictionsAndBus;
   const scheduledCallbacks = [];
   let finishRefresh;
 
@@ -273,7 +305,7 @@ test("completed async refresh does not restart prediction timer after stop", asy
     return { callback };
   };
   global.clearTimeout = () => {};
-  helper.refreshPredictionsAndWeather = () => new Promise((resolve) => {
+  helper.refreshPredictionsAndBus = () => new Promise((resolve) => {
     finishRefresh = resolve;
   });
 
@@ -291,7 +323,7 @@ test("completed async refresh does not restart prediction timer after stop", asy
   } finally {
     global.setTimeout = originalSetTimeout;
     global.clearTimeout = originalClearTimeout;
-    helper.refreshPredictionsAndWeather = originalRefresh;
+    helper.refreshPredictionsAndBus = originalRefresh;
   }
 });
 

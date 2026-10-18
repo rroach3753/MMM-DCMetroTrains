@@ -6,24 +6,37 @@ The format is based on Keep a Changelog.
 
 ## [Unreleased]
 
+## [4.0.0] - 2026-10-18
+
+### Breaking Changes
+
+- Require `WMATA_API_KEY` in the MagicMirror process environment. Remove `apiKey`
+  from renderer configuration and restart MagicMirror after updating its
+  service/PM2 environment; renderer API keys are ignored.
+- Limit MetroBus configuration to 20 valid, non-empty stops.
+
 ### Changed
 
+- Enable recommended ESLint checks with separate browser and Node.js environments
+  and add lint/test CI on Node.js 20, 22, and 24.
+- Remove unused backend grouping helpers and obsolete weather/first-last-train
+  styles. Rename the prediction refresh routine, retaining its legacy alias.
+- Add frontend arrival-rendering regression coverage.
 - Updated README configuration examples to be directly pasteable into the MagicMirror modules array.
 - Updated ESLint to 10.10.0.
 
 ### Fixed
 
 - Ignored the runtime snapshot cache so module updaters do not treat generated data as a local source change.
+- Harden refresh lifecycle and concurrency and bound timer delays.
 
 ### Security
 
 - Updated the `brace-expansion` override to 5.0.9 to address a denial-of-service vulnerability.
 - Updated the `smol-toml` override to 1.8.0 to address a development-tool denial-of-service vulnerability.
 - Required the server-only `WMATA_API_KEY` environment variable and removed the renderer API-key fallback and socket exposure.
-
-### Changed
-
-- Existing installations must move the WMATA API key from `config.js` to the MagicMirror process environment.
+- Reject malformed socket configuration without replacing an active valid
+  configuration and bound MetroBus request concurrency.
 
 ## [3.0.1] - 2026-07-14
 

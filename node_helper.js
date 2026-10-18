@@ -3,16 +3,6 @@ const https = require("node:https");
 const fs = require("node:fs");
 const path = require("node:path");
 
-const LINE_ORDER = {
-  RD: 1,
-  OR: 2,
-  SV: 3,
-  BL: 4,
-  YL: 5,
-  GR: 6,
-  NA: 99
-};
-
 function normalizeList(value) {
   if (!value) {
     return [];
@@ -70,43 +60,6 @@ function sortCopy(array, compareFn) {
 
 function normalizeLineCode(code, fallback) {
   return String(code || fallback || "NA").toUpperCase();
-}
-
-function calculateLineWeight(lineCode, customOrder) {
-  const normalizedLine = normalizeLineCode(lineCode);
-  const index = customOrder.indexOf(normalizedLine);
-  if (index >= 0) {
-    return index + 1;
-  }
-
-  return LINE_ORDER[String(lineCode || "NA").toUpperCase()] || 90;
-}
-
-function createPredictionGroups(predictions, lineOrder, getLineWeightFn) {
-  const grouped = {};
-  const customOrder = normalizeList(lineOrder).map((entry) => entry.toUpperCase());
-
-  predictions.forEach((prediction) => {
-    const line = normalizeLineCode(prediction.line);
-    if (!grouped[line]) {
-      grouped[line] = [];
-    }
-
-    grouped[line].push(prediction);
-  });
-
-  return Object.keys(grouped)
-    .sort((a, b) => getLineWeightFn(a, customOrder) - getLineWeightFn(b, customOrder))
-    .map((line) => ({
-      line,
-      predictions: sortCopy(grouped[line], (a, b) => {
-        if (a.minutesSort !== b.minutesSort) {
-          return a.minutesSort - b.minutesSort;
-        }
-
-        return a.destination.localeCompare(b.destination);
-      })
-    }));
 }
 
 function normalizeLineOrderToUpperCase(lineOrder) {
@@ -169,7 +122,6 @@ module.exports = NodeHelper.create({
     this.stationProfiles = [];
     this.busStopProfiles = [];
     this.stationCodesByName = {};
-    this.normalizedLineOrderCache = [];
     this.retryAttempt = 0;
     this.degradedMode = false;
     this.lastSuccessAt = null;
@@ -352,7 +304,6 @@ module.exports = NodeHelper.create({
     const previousInstanceId = this.instanceId;
     const previousStationProfiles = this.stationProfiles;
     const previousBusStopProfiles = this.busStopProfiles;
-    const previousLineOrder = this.normalizedLineOrderCache;
     try {
       if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
         throw new Error("Configuration must be an object.");
@@ -363,7 +314,6 @@ module.exports = NodeHelper.create({
       this.instanceId = previousInstanceId;
       this.stationProfiles = previousStationProfiles;
       this.busStopProfiles = previousBusStopProfiles;
-      this.normalizedLineOrderCache = previousLineOrder;
       console.error("[MMM-DCMetroTrains] Rejected malformed socket configuration.");
       this.sendSocketNotification("DC_METRO_ERROR", {
         instanceId: typeof payload?.instanceId === "string" ? payload.instanceId : null,
@@ -387,7 +337,6 @@ module.exports = NodeHelper.create({
     this.instanceId = config.instanceId || null;
     this.stationProfiles = this.resolveStationProfiles();
     this.busStopProfiles = this.resolveMetroBusStopProfiles();
-    this.normalizedLineOrderCache = normalizeLineOrderToUpperCase(this.config.lineOrder);
 
     this.stopped = false;
     this.lifecycleGeneration += 1;
@@ -397,6 +346,7 @@ module.exports = NodeHelper.create({
   applyServerSecrets(config) {
     return {
       ...config,
+      lineOrder: normalizeLineOrderToUpperCase(config.lineOrder),
       apiKey: String(process.env.WMATA_API_KEY || "").trim()
     };
   },
@@ -424,7 +374,7 @@ module.exports = NodeHelper.create({
         }
         this.validateStationProfiles();
       }
-      const predictionsOk = await this.refreshPredictionsAndWeather(generation);
+      const predictionsOk = await this.refreshPredictionsAndBus(generation);
       if (!this.isLifecycleActive(generation)) {
         return;
       }
@@ -467,7 +417,7 @@ module.exports = NodeHelper.create({
         return;
       }
 
-      await this.refreshPredictionsAndWeather(generation);
+      await this.refreshPredictionsAndBus(generation);
 
       // Retry timer takes over scheduling when prediction refreshes fail.
       if (this.isLifecycleActive(generation) && !this.retryTimer) {
@@ -633,7 +583,12 @@ module.exports = NodeHelper.create({
     });
   },
 
+  // Deprecated internal name retained for integrations using the previous helper.
   async refreshPredictionsAndWeather(generation = this.lifecycleGeneration) {
+    return this.refreshPredictionsAndBus(generation);
+  },
+
+  async refreshPredictionsAndBus(generation = this.lifecycleGeneration) {
     if (!this.isLifecycleActive(generation)) {
       return false;
     }
@@ -1218,15 +1173,6 @@ module.exports = NodeHelper.create({
     return map;
   },
 
-  groupPredictionsByLine(predictions) {
-    return createPredictionGroups(predictions, this.config.lineOrder, this.getLineWeight.bind(this));
-  },
-
-  getLineWeight(lineCode, customOrder) {
-    const order = customOrder || this.normalizedLineOrderCache;
-    return calculateLineWeight(lineCode, order);
-  },
-
   matchesLineFilter(line, lineFilter) {
     const filter = normalizeList(lineFilter);
     if (isEmpty(filter)) {
@@ -1398,20 +1344,12 @@ module.exports = NodeHelper.create({
     return parseBoolean(this.config[key], fallback);
   },
 
-  getConfigValue(key, fallback) {
-    return this.config[key] != null ? this.config[key] : fallback;
-  },
-
   getConfigString(key, fallback) {
     return String(this.config[key] || fallback || "").toLowerCase();
   },
 
   getConfigNumber(key, fallback) {
     return parseNumber(this.config[key], fallback);
-  },
-
-  isCriticalSeverity(severity) {
-    return normalizeLowercase(severity, "") === "critical";
   },
 
   getFreshnessState(timestamp) {

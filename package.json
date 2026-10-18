@@ -1,6 +1,6 @@
 {
   "name": "mmm-dcmetrotrains",
-  "version": "3.0.1",
+  "version": "4.0.0",
   "type": "commonjs",
   "description": "MagicMirror module for live Washington DC Metro train predictions and service alerts",
   "main": "node_helper.js",
@@ -21,7 +21,9 @@
     "train"
   ],
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "eslint": "^10.12.0",
+    "globals": "^17.13.0",
     "markdownlint-cli2": "^0.23.3"
   },
   "overrides": {

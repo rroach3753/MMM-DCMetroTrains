@@ -1,5 +1,3 @@
-/* global Module */
-
 const LINE_ORDER = {
   RD: 1,
   OR: 2,
@@ -1372,14 +1370,6 @@ Module.register("MMM-DCMetroTrains", {
   matchesSeverityFilter(severity) {
     const filter = this.getConfigString("incidentSeverityFilter", "all");
     return (SEVERITY_RANK[String(severity || "advisory").toLowerCase()] || 1) >= (SEVERITY_RANK[filter] || 0);
-  },
-
-  getConfigBool(key, fallback) {
-    return parseBoolean(this.config[key], fallback);
-  },
-
-  getConfigValue(key, fallback) {
-    return this.config[key] != null ? this.config[key] : fallback;
   },
 
   getConfigString(key, fallback) {

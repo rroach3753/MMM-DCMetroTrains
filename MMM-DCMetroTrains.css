@@ -89,8 +89,6 @@
 .dcmetro--noBorders .dcmetro__condition--normal,
 .dcmetro--noBorders .dcmetro__condition--alert,
 .dcmetro--noBorders .dcmetro__condition--delayed,
-.dcmetro--noBorders .dcmetro__condition--weather,
-.dcmetro--noBorders .dcmetro__condition--night,
 .dcmetro--noBorders .dcmetro__condition--stale {
   border-color: transparent !important;
 }
@@ -230,12 +228,6 @@
 .dcmetro__condition--delayed {
   color: #ffe3ad;
   border-color: rgba(215, 155, 31, 0.35);
-}
-
-.dcmetro__condition--weather,
-.dcmetro__condition--night {
-  color: #d7e5ff;
-  border-color: rgba(93, 131, 214, 0.3);
 }
 
 .dcmetro__condition--stale {
@@ -691,52 +683,4 @@
 .dcmetro--busOnly .dcmetro__table td {
   padding-top: 2px;
   padding-bottom: 2px;
-}
-
-/* First & Last Trains */
-.dcmetro__firstLast {
-  padding: 10px;
-  margin: 8px 0;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 8px;
-}
-
-.dcmetro__firstLastTitle {
-  display: block;
-  margin-bottom: 8px;
-  font-weight: 600;
-  opacity: 0.8;
-}
-
-.dcmetro__firstLastDir {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 6px;
-  font-size: 0.85em;
-}
-
-.dcmetro__firstLastDir:last-child {
-  margin-bottom: 0;
-}
-
-.dcmetro__firstLastDirLabel {
-  min-width: 20px;
-  font-weight: 600;
-  padding: 2px 4px;
-  background: rgba(255, 255, 255, 0.08);
-  border-radius: 3px;
-  text-align: center;
-}
-
-.dcmetro__firstLastTimes {
-  display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
-  flex: 1;
-}
-
-.dcmetro__firstLastTime {
-  display: inline-block;
 }

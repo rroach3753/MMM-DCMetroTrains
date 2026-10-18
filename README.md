@@ -30,7 +30,7 @@ A full-featured [MagicMirror²](https://github.com/MagicMirrorOrg/MagicMirror) m
 - Shared helper-side WMATA request cache and persistent last-known-good fallback
 - Exponential retry backoff with degraded-mode status when the API fails
 
-Current npm/package version is `3.0.1`. See [CHANGELOG.md](CHANGELOG.md) for the full release notes and upgrade details.
+Current npm/package version is `4.0.0`. See [CHANGELOG.md](CHANGELOG.md) for the full release notes and upgrade details.
 
 ## Requirements
 
@@ -42,6 +42,17 @@ This module will not function without a valid API key.
 ## Changelog
 
 See [CHANGELOG.md](CHANGELOG.md) for full release history.
+
+## Upgrade Notes For 4.0.0
+
+Move the WMATA API key from the module's `config.js` entry to `WMATA_API_KEY`
+in the environment that launches MagicMirror. Remove the old `apiKey` option;
+renderer-supplied credentials are ignored. Restart MagicMirror after updating
+the service/PM2 environment. An export in an unrelated terminal does not update
+an already-running service.
+
+MetroBus configuration now accepts at most 20 valid, non-empty stops. Reduce
+longer `metroBusStops` lists before upgrading.
 
 ## Upgrade Notes For 3.0.0
 
@@ -343,6 +354,13 @@ node --run test
 ```
 
 Fixture payloads for WMATA responses live under `tests/fixtures`.
+
+ESLint uses recommended common-error rules with separate browser and Node.js
+globals. Run development checks on Node.js 20.19 or newer. CI runs lint and
+tests on Node.js 20, 22, and 24 using `npm ci --ignore-scripts`.
+The prediction/bus refresh helper retains its deprecated
+`refreshPredictionsAndWeather` alias for compatibility; it no longer fetches
+weather. Obsolete weather and first/last-train styles have been removed.
 
 ## Troubleshooting Matrix
 
