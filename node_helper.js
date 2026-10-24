@@ -1532,7 +1532,6 @@ module.exports = NodeHelper.create({
       });
 
       request.on("error", (error) => reject(error));
-      request.end();
     });
   }
 });
