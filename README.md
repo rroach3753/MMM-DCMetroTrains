@@ -344,13 +344,13 @@ All browser-side module settings are optional and fall back to the defaults show
 Run lint checks:
 
 ```bash
-node --run lint
+npm run lint
 ```
 
 Run tests (Node built-in test runner):
 
 ```bash
-node --run test
+npm test
 ```
 
 Fixture payloads for WMATA responses live under `tests/fixtures`.
