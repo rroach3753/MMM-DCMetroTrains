@@ -344,20 +344,23 @@ All browser-side module settings are optional and fall back to the defaults show
 Run lint checks:
 
 ```bash
-npm run lint
+npx --no-install eslint
 ```
 
 Run tests (Node built-in test runner):
 
 ```bash
-npm test
+node --test
 ```
 
 Fixture payloads for WMATA responses live under `tests/fixtures`.
 
 ESLint uses recommended common-error rules with separate browser and Node.js
-globals. Run development checks on Node.js 20.19 or newer. CI runs lint and
-tests on Node.js 20, 22, and 24 using `npm ci --ignore-scripts`.
+globals. Run development checks locally on Node.js 20.19 or newer after
+installing dependencies with `npm ci --ignore-scripts`.
+This repository has no automated CI workflow.
+These commands invoke tools directly to retain Node.js 20 compatibility;
+`node --run` requires Node.js 22 or newer.
 The prediction/bus refresh helper retains its deprecated
 `refreshPredictionsAndWeather` alias for compatibility; it no longer fetches
 weather. Obsolete weather and first/last-train styles have been removed.
