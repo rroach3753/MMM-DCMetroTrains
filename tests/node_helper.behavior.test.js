@@ -59,6 +59,7 @@ test("malformed socket values are rejected without uncaught coercion errors", ()
 function loadFrontendModule() {
   const source = fs.readFileSync(path.join(ROOT, "MMM-DCMetroTrains.js"), "utf8");
   let definition;
+  const intervals = [];
   vm.runInNewContext(source, {
     Module: {
       register(name, moduleDefinition) {
@@ -67,6 +68,11 @@ function loadFrontendModule() {
     },
     Intl,
     console,
+    setInterval(callback) {
+      intervals.push(callback);
+      return intervals.length;
+    },
+    clearInterval() {},
     document: {
       createElement() {
         return {
@@ -76,6 +82,7 @@ function loadFrontendModule() {
       }
     }
   });
+  definition.testIntervals = intervals;
   return definition;
 }
 
@@ -174,6 +181,248 @@ test("snapshot restoration preserves fetched timestamp in outbound payload", () 
   });
 });
 
+test("snapshot writes are serialized and coalesce to the latest pending state", async (t) => {
+  helper.start();
+  const originalMkdir = fs.promises.mkdir;
+  const originalWriteFile = fs.promises.writeFile;
+  const originalRename = fs.promises.rename;
+  let releaseFirst;
+  const firstWrite = new Promise((resolve) => { releaseFirst = resolve; });
+  let mkdirCalls = 0;
+  const writes = [];
+  fs.promises.mkdir = async () => {
+    mkdirCalls += 1;
+    if (mkdirCalls === 1) await firstWrite;
+  };
+  fs.promises.writeFile = async (_path, contents) => { writes.push(JSON.parse(contents)); };
+  fs.promises.rename = async () => {};
+  t.after(() => {
+    helper.stop();
+    fs.promises.mkdir = originalMkdir;
+    fs.promises.writeFile = originalWriteFile;
+    fs.promises.rename = originalRename;
+  });
+
+  helper.latestDataTimestamp = 1;
+  const first = helper.persistLastGoodSnapshot();
+  helper.latestDataTimestamp = 2;
+  const second = helper.persistLastGoodSnapshot();
+  helper.latestDataTimestamp = 3;
+  const third = helper.persistLastGoodSnapshot();
+  assert.equal(second, first);
+  assert.equal(third, first);
+  releaseFirst();
+  await first;
+  assert.deepEqual(writes.map((snapshot) => snapshot.fetchedAt), [1, 3]);
+});
+
+test("snapshot persistence waits for a state queued during drain completion", async (t) => {
+  helper.start();
+  const originalFlush = helper.flushPendingSnapshots;
+  const originalMkdir = fs.promises.mkdir;
+  const originalWriteFile = fs.promises.writeFile;
+  const originalRename = fs.promises.rename;
+  const writes = [];
+  let drains = 0;
+  fs.promises.mkdir = async () => {};
+  fs.promises.writeFile = async (_path, contents) => { writes.push(JSON.parse(contents).fetchedAt); };
+  fs.promises.rename = async () => {};
+  helper.flushPendingSnapshots = async function () {
+    drains += 1;
+    if (drains === 1) {
+      helper.pendingSnapshot = null;
+      await Promise.resolve();
+      helper.pendingSnapshot = {
+        fetchedAt: 2,
+        lastSuccessAt: 2,
+        stations: [],
+        busStops: [],
+        incidents: []
+      };
+      return;
+    }
+    return originalFlush.call(this);
+  };
+  t.after(() => {
+    helper.stop();
+    helper.flushPendingSnapshots = originalFlush;
+    fs.promises.mkdir = originalMkdir;
+    fs.promises.writeFile = originalWriteFile;
+    fs.promises.rename = originalRename;
+  });
+
+  helper.latestDataTimestamp = 1;
+  await helper.persistLastGoodSnapshot();
+  assert.deepEqual(writes, [2]);
+  assert.equal(drains, 2);
+});
+
+test("initial prediction and incident refreshes run concurrently and publish once", async (t) => {
+  helper.start();
+  helper.stopped = false;
+  helper.lifecycleGeneration = 1;
+  helper.config = { metroBusOnlyMode: true };
+  const originals = {
+    predictions: helper.refreshPredictionsAndBus,
+    incidents: helper.refreshIncidents,
+    persist: helper.persistLastGoodSnapshot,
+    broadcast: helper.broadcastData,
+    schedulePrediction: helper.scheduleNextPredictionRefresh,
+    scheduleIncident: helper.scheduleNextIncidentRefresh
+  };
+  let started = 0;
+  let release;
+  const barrier = new Promise((resolve) => { release = resolve; });
+  let persisted = 0;
+  let broadcast = 0;
+  helper.refreshPredictionsAndBus = async (_generation, publish) => {
+    assert.equal(publish, false);
+    started += 1;
+    await barrier;
+    return true;
+  };
+  helper.refreshIncidents = async (_generation, publish) => {
+    assert.equal(publish, false);
+    started += 1;
+    await barrier;
+    return true;
+  };
+  helper.persistLastGoodSnapshot = () => { persisted += 1; };
+  helper.broadcastData = () => { broadcast += 1; };
+  helper.scheduleNextPredictionRefresh = () => {};
+  helper.scheduleNextIncidentRefresh = () => {};
+  t.after(() => {
+    helper.stop();
+    helper.refreshPredictionsAndBus = originals.predictions;
+    helper.refreshIncidents = originals.incidents;
+    helper.persistLastGoodSnapshot = originals.persist;
+    helper.broadcastData = originals.broadcast;
+    helper.scheduleNextPredictionRefresh = originals.schedulePrediction;
+    helper.scheduleNextIncidentRefresh = originals.scheduleIncident;
+  });
+
+  const initialized = helper.initialize(1);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(started, 2);
+  release();
+  await initialized;
+  assert.equal(persisted, 1);
+  assert.equal(broadcast, 1);
+});
+
+test("failed initial rail refresh preserves the last-good station snapshot", async (t) => {
+  helper.start();
+  helper.stopped = false;
+  helper.lifecycleGeneration = 1;
+  helper.config = { metroBusOnlyMode: false };
+  helper.latestStations = [{ code: "A01", predictions: [{ destination: "Glenmont" }] }];
+  helper.latestPredictions = [];
+  const originals = {
+    fetchStations: helper.fetchStations,
+    validateStationProfiles: helper.validateStationProfiles,
+    predictions: helper.refreshPredictionsAndBus,
+    incidents: helper.refreshIncidents,
+    persist: helper.persistLastGoodSnapshot,
+    broadcast: helper.broadcastData,
+    schedulePrediction: helper.scheduleNextPredictionRefresh,
+    scheduleIncident: helper.scheduleNextIncidentRefresh
+  };
+  let persisted = 0;
+  let broadcast = 0;
+  helper.fetchStations = async () => {};
+  helper.validateStationProfiles = () => {};
+  helper.refreshPredictionsAndBus = async () => false;
+  helper.refreshIncidents = async (_generation, _publish, updateStations) => {
+    helper.latestIncidents = [{ lineCodes: ["RD"] }];
+    assert.equal(updateStations, false);
+    return true;
+  };
+  helper.persistLastGoodSnapshot = () => { persisted += 1; };
+  helper.broadcastData = () => { broadcast += 1; };
+  helper.scheduleNextPredictionRefresh = () => {};
+  helper.scheduleNextIncidentRefresh = () => {};
+  t.after(() => {
+    helper.stop();
+    helper.fetchStations = originals.fetchStations;
+    helper.validateStationProfiles = originals.validateStationProfiles;
+    helper.refreshPredictionsAndBus = originals.predictions;
+    helper.refreshIncidents = originals.incidents;
+    helper.persistLastGoodSnapshot = originals.persist;
+    helper.broadcastData = originals.broadcast;
+    helper.scheduleNextPredictionRefresh = originals.schedulePrediction;
+    helper.scheduleNextIncidentRefresh = originals.scheduleIncident;
+  });
+
+  await helper.initialize(1);
+  assert.equal(helper.latestStations[0].predictions[0].destination, "Glenmont");
+  assert.equal(persisted, 0);
+  assert.equal(broadcast, 0);
+});
+
+test("successful initial rail refresh rebuilds output with the final incident state", async (t) => {
+  helper.start();
+  helper.stopped = false;
+  helper.lifecycleGeneration = 1;
+  helper.config = {
+    metroBusOnlyMode: false,
+    summaryCount: 3,
+    incidentSeverityFilter: "all",
+    alertRules: []
+  };
+  helper.stationProfiles = [{
+    code: "A01", name: "", priority: 0, lineFilter: [],
+    destinationIncludes: [], alerts: [], groupByLine: false, showIncidents: true
+  }];
+  helper.stationMap = { A01: "Metro Center" };
+  helper.latestPredictions = [{
+    LocationCode: "A01", Line: "RD", DestinationName: "Glenmont",
+    Group: "1", Min: "12", Car: "8"
+  }];
+  const originals = {
+    fetchStations: helper.fetchStations,
+    validateStationProfiles: helper.validateStationProfiles,
+    predictions: helper.refreshPredictionsAndBus,
+    incidents: helper.refreshIncidents,
+    persist: helper.persistLastGoodSnapshot,
+    broadcast: helper.broadcastData,
+    schedulePrediction: helper.scheduleNextPredictionRefresh,
+    scheduleIncident: helper.scheduleNextIncidentRefresh
+  };
+  let persisted = 0;
+  let broadcast = 0;
+  helper.fetchStations = async () => {};
+  helper.validateStationProfiles = () => {};
+  helper.refreshPredictionsAndBus = async () => true;
+  helper.refreshIncidents = async () => {
+    helper.latestIncidents = [{
+      lineCodes: ["RD"], rank: 3, severity: "major",
+      linesText: "Red", description: "Major delay"
+    }];
+    return true;
+  };
+  helper.persistLastGoodSnapshot = () => { persisted += 1; };
+  helper.broadcastData = () => { broadcast += 1; };
+  helper.scheduleNextPredictionRefresh = () => {};
+  helper.scheduleNextIncidentRefresh = () => {};
+  t.after(() => {
+    helper.stop();
+    helper.fetchStations = originals.fetchStations;
+    helper.validateStationProfiles = originals.validateStationProfiles;
+    helper.refreshPredictionsAndBus = originals.predictions;
+    helper.refreshIncidents = originals.incidents;
+    helper.persistLastGoodSnapshot = originals.persist;
+    helper.broadcastData = originals.broadcast;
+    helper.scheduleNextPredictionRefresh = originals.schedulePrediction;
+    helper.scheduleNextIncidentRefresh = originals.scheduleIncident;
+  });
+
+  await helper.initialize(1);
+  assert.equal(persisted, 1);
+  assert.equal(broadcast, 1);
+  assert.equal(helper.latestStations[0].predictions[0].statusClass, "alert");
+  assert.match(helper.latestStations[0].conditionText, /service alert/);
+});
+
 test("frontend omits the WMATA API key from its socket payload", () => {
   const definition = loadFrontendModule();
   let requestPayload;
@@ -193,6 +442,19 @@ test("frontend omits the WMATA API key from its socket payload", () => {
   moduleInstance.start();
 
   assert.equal(Object.hasOwn(requestPayload, "apiKey"), false);
+});
+
+test("frontend skips the UI ticker when live age displays are disabled", () => {
+  const definition = loadFrontendModule();
+  const moduleInstance = Object.assign({}, definition, {
+    config: { showFreshnessChip: false, showLastUpdated: false },
+    uiTickTimer: null
+  });
+  moduleInstance.startUiTicker();
+  assert.equal(definition.testIntervals.length, 0);
+  moduleInstance.config.showLastUpdated = true;
+  moduleInstance.startUiTicker();
+  assert.equal(definition.testIntervals.length, 1);
 });
 
 test("frontend preserves grouped and flat arrivals and handles empty predictions", () => {
@@ -283,6 +545,46 @@ test("incident refresh rebuilds, persists, and broadcasts derived station data",
     helper.persistLastGoodSnapshot = originalPersistLastGoodSnapshot;
     helper.broadcastData = originalBroadcastData;
   }
+});
+
+test("station payload computes shared incident and threshold data once", (t) => {
+  helper.start();
+  helper.config = { alertRules: [], summaryCount: 3, incidentSeverityFilter: "all" };
+  helper.stationProfiles = [
+    { code: "A01", priority: 0, lineFilter: [], destinationIncludes: [], alerts: [] },
+    { code: "A02", priority: 1, lineFilter: [], destinationIncludes: [], alerts: [] }
+  ];
+  helper.stationMap = { A01: "One", A02: "Two" };
+  const originalIncidentLines = helper.collectIncidentLines;
+  const originalThresholds = helper.getStatusThresholds;
+  let incidentCalls = 0;
+  let thresholdCalls = 0;
+  helper.collectIncidentLines = (incidents) => {
+    incidentCalls += 1;
+    return originalIncidentLines.call(helper, incidents);
+  };
+  helper.getStatusThresholds = () => {
+    thresholdCalls += 1;
+    return originalThresholds.call(helper);
+  };
+  t.after(() => {
+    helper.stop();
+    helper.collectIncidentLines = originalIncidentLines;
+    helper.getStatusThresholds = originalThresholds;
+  });
+
+  const prediction = {
+    line: "RD", destination: "Glenmont", direction: "N", displayMinutes: "3",
+    minutesSort: 3, cars: "8"
+  };
+  const payload = helper.buildStationPayload(
+    { A01: [prediction], A02: [prediction] },
+    [{ rank: 1, severity: "minor", lineCodes: ["RD"], linesText: "Red", description: "Delay" }]
+  );
+  assert.equal(payload.length, 2);
+  assert.equal(incidentCalls, 1);
+  assert.equal(thresholdCalls, 1);
+  assert.equal(helper.matchesDestinationFilter("Glenmont", [" Glenmont "]), true);
 });
 
 test("completed async refresh does not restart prediction timer after stop", async () => {

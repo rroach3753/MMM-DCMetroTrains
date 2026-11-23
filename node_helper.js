@@ -130,6 +130,8 @@ module.exports = NodeHelper.create({
     this.lastErrorCode = null;
     this.requestCache = new Map();
     this.snapshotLoaded = false;
+    this.pendingSnapshot = null;
+    this.snapshotWritePromise = null;
     this.stopped = true;
     this.lifecycleGeneration = 0;
   },
@@ -374,15 +376,22 @@ module.exports = NodeHelper.create({
         }
         this.validateStationProfiles();
       }
-      const predictionsOk = await this.refreshPredictionsAndBus(generation);
+      const [predictionsOk] = await Promise.all([
+        this.refreshPredictionsAndBus(generation, false),
+        this.refreshIncidents(generation, false, false)
+      ]);
       if (!this.isLifecycleActive(generation)) {
         return;
       }
       if (predictionsOk) {
-        await this.refreshIncidents(generation);
-        if (!this.isLifecycleActive(generation)) {
-          return;
-        }
+        this.latestStations = this.isMetroBusOnlyMode()
+          ? []
+          : this.buildStationPayload(
+            this.groupPredictionsByStation(this.latestPredictions),
+            this.latestIncidents
+          );
+        this.persistLastGoodSnapshot();
+        this.broadcastData();
       }
       this.scheduleNextPredictionRefresh(generation);
       this.scheduleNextIncidentRefresh(generation);
@@ -588,7 +597,7 @@ module.exports = NodeHelper.create({
     return this.refreshPredictionsAndBus(generation);
   },
 
-  async refreshPredictionsAndBus(generation = this.lifecycleGeneration) {
+  async refreshPredictionsAndBus(generation = this.lifecycleGeneration, publish = true) {
     if (!this.isLifecycleActive(generation)) {
       return false;
     }
@@ -613,8 +622,10 @@ module.exports = NodeHelper.create({
       this.latestStations = newStations;
       this.markRefreshHealthy();
       this.latestDataTimestamp = this.lastSuccessAt || Date.now();
-      this.persistLastGoodSnapshot();
-      this.broadcastData();
+      if (publish) {
+        this.persistLastGoodSnapshot();
+        this.broadcastData();
+      }
       return true;
     } catch (error) {
       if (this.isLifecycleActive(generation)) {
@@ -624,37 +635,41 @@ module.exports = NodeHelper.create({
     }
   },
 
-  applyIncidentUpdate(incidents) {
-    const grouped = this.groupPredictionsByStation(this.latestPredictions);
-    const stations = this.isMetroBusOnlyMode()
-      ? []
-      : this.buildStationPayload(grouped, incidents);
-
+  applyIncidentUpdate(incidents, publish = true, updateStations = true) {
     this.latestIncidents = incidents;
-    this.latestStations = stations;
-    this.persistLastGoodSnapshot();
-    this.broadcastData();
+    if (updateStations) {
+      const grouped = this.groupPredictionsByStation(this.latestPredictions);
+      this.latestStations = this.isMetroBusOnlyMode()
+        ? []
+        : this.buildStationPayload(grouped, incidents);
+    }
+    if (publish) {
+      this.persistLastGoodSnapshot();
+      this.broadcastData();
+    }
   },
 
-  async refreshIncidents(generation = this.lifecycleGeneration) {
+  async refreshIncidents(generation = this.lifecycleGeneration, publish = true, updateStations = true) {
     if (!this.isLifecycleActive(generation)) {
-      return;
+      return false;
     }
 
     try {
       const incidents = await this.fetchIncidents();
       if (!this.isLifecycleActive(generation)) {
-        return;
+        return false;
       }
 
-      this.applyIncidentUpdate(incidents);
+      this.applyIncidentUpdate(incidents, publish, updateStations);
+      return true;
     } catch (error) {
       if (!this.isLifecycleActive(generation)) {
-        return;
+        return false;
       }
 
       console.warn("[MMM-DCMetroTrains] Failed to refresh incidents:", error.message);
-      this.applyIncidentUpdate([]);
+      this.applyIncidentUpdate([], publish, updateStations);
+      return false;
     }
   },
 
@@ -983,12 +998,21 @@ module.exports = NodeHelper.create({
 
   buildStationPayload(grouped, incidents) {
     const profiles = sortCopy(this.stationProfiles, (a, b) => a.priority - b.priority);
+    const context = {
+      incidentLines: this.collectIncidentLines(incidents),
+      thresholds: this.getStatusThresholds(),
+      activeIncidentCount: ensureArray(incidents)
+        .filter((incident) => this.matchesSeverityFilter(incident.severity)).length,
+      freshness: this.getFreshnessState(this.lastBroadcastAt || Date.now()),
+      incidentSearchText: ensureArray(incidents)
+        .map((incident) => `${incident.linesText} ${incident.description}`.toLowerCase())
+    };
 
     return profiles.map((profile) => {
       const rawPredictions = grouped[profile.code] || [];
-      const predictions = this.filterAndDecoratePredictions(rawPredictions, profile, incidents);
-      const alerts = this.collectAlerts(predictions, incidents, profile);
-      const condition = this.buildConditionSummary(predictions, incidents);
+      const predictions = this.filterAndDecoratePredictions(rawPredictions, profile, context);
+      const alerts = this.collectAlerts(predictions, incidents, profile, context);
+      const condition = this.buildConditionSummary(predictions, incidents, context);
 
       return {
         code: profile.code,
@@ -1004,16 +1028,21 @@ module.exports = NodeHelper.create({
     });
   },
 
-  filterAndDecoratePredictions(predictions, profile, incidents) {
-    const incidentLines = this.collectIncidentLines(incidents);
+  filterAndDecoratePredictions(predictions, profile, context = {}) {
+    const lineFilter = new Set(normalizeList(profile.lineFilter).map((line) => normalizeLineCode(line, "")));
+    const destinationIncludes = normalizeList(profile.destinationIncludes)
+      .map((entry) => entry.toLowerCase());
+    const incidentLines = context.incidentLines || {};
+    const thresholds = context.thresholds || this.getStatusThresholds();
 
     return predictions
-      .filter((item) => this.matchesLineFilter(item.line, profile.lineFilter) && this.matchesDestinationFilter(item.destination, profile.destinationIncludes))
-      .map((item) => this.decoratePrediction(item, incidentLines));
+      .filter((item) => this.matchesLineFilter(item.line, lineFilter) &&
+        this.matchesDestinationFilter(item.destination, destinationIncludes))
+      .map((item) => this.decoratePrediction(item, incidentLines, thresholds));
   },
 
-  decoratePrediction(prediction, incidentLines) {
-    const status = this.classifyPrediction(prediction, incidentLines);
+  decoratePrediction(prediction, incidentLines, thresholds) {
+    const status = this.classifyPrediction(prediction, incidentLines, thresholds);
     const carsClass = this.classifyCars(prediction.cars);
 
     return {
@@ -1031,11 +1060,9 @@ module.exports = NodeHelper.create({
     };
   },
 
-  classifyPrediction(prediction, incidentLines) {
+  classifyPrediction(prediction, incidentLines, thresholds = this.getStatusThresholds()) {
     const line = normalizeLineCode(prediction.line, "");
     const matchedIncident = incidentLines[line] || null;
-
-    const thresholds = this.getStatusThresholds();
 
     if (matchedIncident && matchedIncident.rank >= 3) {
       return { className: "alert", label: "Alert" };
@@ -1099,9 +1126,13 @@ module.exports = NodeHelper.create({
     return `${raw} cars`;
   },
 
-  collectAlerts(predictions, incidents, profile) {
+  collectAlerts(predictions, incidents, profile, context = {}) {
     const alerts = [];
     const rules = normalizeList(profile.alerts || this.config.alertRules);
+    const predictionSearchText = predictions
+      .map((prediction) => `${prediction.line} ${prediction.destination} ${prediction.displayMinutes}`.toLowerCase());
+    const incidentSearchText = context.incidentSearchText ||
+      ensureArray(incidents).map((incident) => `${incident.linesText} ${incident.description}`.toLowerCase());
 
     rules.forEach((ruleText) => {
       const rule = String(ruleText || "").trim();
@@ -1110,8 +1141,8 @@ module.exports = NodeHelper.create({
       }
 
       const lowerRule = rule.toLowerCase();
-      const hit = predictions.some((prediction) => `${prediction.line} ${prediction.destination} ${prediction.displayMinutes}`.toLowerCase().includes(lowerRule))
-        || incidents.some((incident) => `${incident.linesText} ${incident.description}`.toLowerCase().includes(lowerRule));
+      const hit = predictionSearchText.some((text) => text.includes(lowerRule)) ||
+        incidentSearchText.some((text) => text.includes(lowerRule));
 
       if (hit) {
         alerts.push({
@@ -1130,16 +1161,17 @@ module.exports = NodeHelper.create({
     return alerts;
   },
 
-  buildConditionSummary(predictions, incidents) {
-    const freshness = this.getFreshnessState(this.lastBroadcastAt || Date.now());
+  buildConditionSummary(predictions, incidents, context = {}) {
+    const freshness = context.freshness || this.getFreshnessState(this.lastBroadcastAt || Date.now());
     const safePredictions = ensureArray(predictions);
     const safeIncidents = ensureArray(incidents);
-    const activeIncidents = safeIncidents.filter((incident) => this.matchesSeverityFilter(incident.severity));
+    const activeIncidentCount = context.activeIncidentCount ??
+      safeIncidents.filter((incident) => this.matchesSeverityFilter(incident.severity)).length;
     const delayedTrains = safePredictions.filter((prediction) => this.predictionsAreDamaged(prediction));
 
-    if (activeIncidents.length) {
+    if (activeIncidentCount) {
       return {
-        text: `${pluralize(activeIncidents.length, "service alert")}${delayedTrains.length ? ` • ${pluralize(delayedTrains.length, "delayed train")}` : ""}`,
+        text: `${pluralize(activeIncidentCount, "service alert")}${delayedTrains.length ? ` • ${pluralize(delayedTrains.length, "delayed train")}` : ""}`,
         className: "dcmetro__condition--alert"
       };
     }
@@ -1174,13 +1206,15 @@ module.exports = NodeHelper.create({
   },
 
   matchesLineFilter(line, lineFilter) {
-    const filter = normalizeList(lineFilter);
-    if (isEmpty(filter)) {
+    const filter = lineFilter instanceof Set
+      ? lineFilter
+      : new Set(normalizeList(lineFilter).map((entry) => normalizeLineCode(entry, "")));
+    if (!filter.size) {
       return true;
     }
 
     const upperLine = normalizeLineCode(line, "");
-    return filter.some((entry) => entry.toUpperCase() === upperLine);
+    return filter.has(upperLine);
   },
 
   matchesDestinationFilter(destination, destinationIncludes) {
@@ -1387,21 +1421,43 @@ module.exports = NodeHelper.create({
   },
 
   persistLastGoodSnapshot() {
-    try {
-      const snapshot = {
-        fetchedAt: this.latestDataTimestamp || Date.now(),
-        lastSuccessAt: this.lastSuccessAt || Date.now(),
-        stations: this.latestStations,
-        busStops: this.latestBusStops,
-        incidents: this.latestIncidents
-      };
+    this.pendingSnapshot = {
+      fetchedAt: this.latestDataTimestamp || Date.now(),
+      lastSuccessAt: this.lastSuccessAt || Date.now(),
+      stations: this.latestStations,
+      busStops: this.latestBusStops,
+      incidents: this.latestIncidents
+    };
+    if (!this.snapshotWritePromise) {
+      this.startSnapshotWrite();
+    }
+    return this.snapshotWritePromise;
+  },
 
-      fs.mkdirSync(SNAPSHOT_DIR, { recursive: true });
+  startSnapshotWrite() {
+    this.snapshotWritePromise = this.flushPendingSnapshots()
+      .catch((error) => {
+        console.warn("[MMM-DCMetroTrains] Failed to persist snapshot:", error.message);
+      })
+      .finally(() => {
+        this.snapshotWritePromise = null;
+        if (this.pendingSnapshot) return this.startSnapshotWrite();
+        return undefined;
+      });
+    return this.snapshotWritePromise;
+  },
+
+  async flushPendingSnapshots() {
+    let snapshot;
+    while ((snapshot = this.pendingSnapshot)) {
+      this.pendingSnapshot = null;
+      await fs.promises.mkdir(SNAPSHOT_DIR, { recursive: true });
       const tempFile = `${SNAPSHOT_FILE}.tmp`;
-      fs.writeFileSync(tempFile, JSON.stringify(snapshot), { encoding: "utf8", mode: 0o600 });
-      fs.renameSync(tempFile, SNAPSHOT_FILE);
-    } catch (error) {
-      console.warn("[MMM-DCMetroTrains] Failed to persist snapshot:", error.message);
+      await fs.promises.writeFile(tempFile, JSON.stringify(snapshot), {
+        encoding: "utf8",
+        mode: 0o600
+      });
+      await fs.promises.rename(tempFile, SNAPSHOT_FILE);
     }
   },
 

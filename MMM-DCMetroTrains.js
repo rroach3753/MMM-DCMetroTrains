@@ -921,12 +921,12 @@ Module.register("MMM-DCMetroTrains", {
       this.uiTickTimer = null;
     }
 
+    if (!this.config.showFreshnessChip && !this.config.showLastUpdated) {
+      return;
+    }
+
     this.uiTickTimer = setInterval(() => {
       if (!this.loaded || this.shouldShowBlockingError()) {
-        return;
-      }
-
-      if (!this.config.showFreshnessChip && !this.config.showLastUpdated) {
         return;
       }
 
