@@ -1,0 +1,269 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/rroach3753/MMM-DCMetroTrains/main/config.schema.json",
+  "title": "MMM-DCMetroTrains configuration",
+  "description": "Browser-side configuration for MMM-DCMetroTrains. WMATA_API_KEY is supplied only through the server environment.",
+  "type": "object",
+  "$defs": {
+    "timeWindow": {
+      "type": "object",
+      "properties": {
+        "start": { "type": "string", "pattern": "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$" },
+        "end": { "type": "string", "pattern": "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$" }
+      },
+      "required": ["start", "end"],
+      "additionalProperties": false
+    },
+    "timeWindowArray": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/timeWindow" }
+    },
+    "station": {
+      "oneOf": [
+        { "type": "string", "minLength": 1 },
+        {
+          "type": "object",
+          "properties": {
+            "code": { "type": "string", "minLength": 1 },
+            "stationCode": { "type": "string", "minLength": 1 },
+            "id": { "type": "string", "minLength": 1 },
+            "name": { "type": "string" },
+            "lineFilter": { "type": "array", "items": { "type": "string" } },
+            "destinationIncludes": { "type": "array", "items": { "type": "string" } },
+            "maxRows": { "type": "integer", "minimum": 1 },
+            "compact": { "type": "boolean" },
+            "groupByLine": { "type": "boolean" },
+            "showIncidents": { "type": "boolean" },
+            "alerts": { "type": "array", "items": { "type": "string" } },
+            "priority": { "type": "number" }
+          },
+          "anyOf": [
+            { "required": ["code"] },
+            { "required": ["stationCode"] },
+            { "required": ["id"] }
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "metroBusStop": {
+      "oneOf": [
+        { "type": "string", "minLength": 1 },
+        {
+          "type": "object",
+          "properties": {
+            "stopId": { "type": "string", "minLength": 1 },
+            "id": { "type": "string", "minLength": 1 },
+            "code": { "type": "string", "minLength": 1 },
+            "name": { "type": "string" },
+            "routeFilter": { "type": "array", "items": { "type": "string" } },
+            "maxRows": { "type": "integer", "minimum": 1 },
+            "priority": { "type": "number" }
+          },
+          "anyOf": [
+            { "required": ["stopId"] },
+            { "required": ["id"] },
+            { "required": ["code"] }
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "profile": {
+      "type": "object",
+      "properties": {
+        "autoCompact": { "type": "boolean" },
+        "compact": { "type": "boolean" },
+        "summaryCount": { "type": "integer", "minimum": 1 },
+        "maxRows": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": false
+    }
+  },
+  "properties": {
+    "stationCodes": {
+      "oneOf": [
+        { "type": "string", "minLength": 1 },
+        { "type": "array", "items": { "$ref": "#/$defs/station" } }
+      ],
+      "default": ["A01"]
+    },
+    "refreshInterval": { "type": "number", "minimum": 5000, "default": 30000 },
+    "incidentsRefreshInterval": { "type": "number", "minimum": 5000, "default": 120000 },
+    "retryDelay": { "type": "number", "minimum": 1000, "default": 15000 },
+    "stationRotationInterval": { "type": "number", "minimum": 2000, "default": 20000 },
+    "maxRows": { "type": "integer", "minimum": 1, "default": 8 },
+    "summaryCount": { "type": "integer", "minimum": 1, "default": 3 },
+    "lineFilter": { "type": "array", "items": { "type": "string" }, "default": [] },
+    "destinationIncludes": { "type": "array", "items": { "type": "string" }, "default": [] },
+    "alertRules": { "type": "array", "items": { "type": "string" }, "default": [] },
+    "hideWhenNoTrains": { "type": "boolean", "default": false },
+    "onlyShowAlertsForVisibleLines": { "type": "boolean", "default": false },
+    "maxIncidentRows": { "type": "integer", "minimum": 1, "default": 3 },
+    "incidentScroll": { "type": "boolean", "default": false },
+    "incidentScrollSpeed": {
+      "type": "number",
+      "minimum": 1,
+      "default": 28,
+      "description": "Ticker cycle duration. Runtime validation also requires it to be at least incidentScrollSpeedMin."
+    },
+    "incidentScrollSpeedMin": { "type": "number", "minimum": 1, "default": 8 },
+    "etaColorMode": { "type": "string", "enum": ["off", "status", "gradient"], "default": "status" },
+    "carsColorMode": { "type": "string", "enum": ["wmata", "capacity", "off"], "default": "wmata" },
+    "statusThresholds": {
+      "type": "object",
+      "properties": {
+        "watchMinutes": { "type": "number", "minimum": 0 },
+        "delayedMinutes": { "type": "number", "minimum": 0 },
+        "criticalMinutes": { "type": "number", "minimum": 0 }
+      },
+      "required": ["watchMinutes", "delayedMinutes", "criticalMinutes"],
+      "additionalProperties": false,
+      "default": { "watchMinutes": 8, "delayedMinutes": 15, "criticalMinutes": 25 }
+    },
+    "stationTitleFormat": { "type": "string", "enum": ["name", "code", "nameWithCode"], "default": "name" },
+    "lineOrder": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": ["RD", "OR", "SV", "BL", "YL", "GR", "NA"]
+    },
+    "quietHours": {
+      "type": "object",
+      "properties": {
+        "weekdays": { "$ref": "#/$defs/timeWindowArray" },
+        "weekends": { "$ref": "#/$defs/timeWindowArray" }
+      },
+      "required": ["weekdays", "weekends"],
+      "additionalProperties": false,
+      "default": {
+        "weekdays": [
+          { "start": "22:00", "end": "23:59" },
+          { "start": "00:00", "end": "05:30" }
+        ],
+        "weekends": [
+          { "start": "23:00", "end": "23:59" },
+          { "start": "00:00", "end": "06:30" }
+        ]
+      }
+    },
+    "blinkOnCritical": { "type": "boolean", "default": false },
+    "updateJitterMs": { "type": "number", "minimum": 0, "default": 0 },
+    "enableSharedApiCache": { "type": "boolean", "default": true },
+    "debugOverlay": { "type": "boolean", "default": false },
+    "fallbackMessage": { "type": "string", "default": "No upcoming trains." },
+    "fontScale": { "type": "number", "exclusiveMinimum": 0, "maximum": 3, "default": 1 },
+    "showIncidents": { "type": "boolean", "default": true },
+    "incidentSeverityFilter": {
+      "type": "string",
+      "enum": ["all", "advisory", "major", "critical"],
+      "default": "all"
+    },
+    "showHeader": { "type": "boolean", "default": true },
+    "showBorders": { "type": "boolean", "default": true },
+    "showBackground": { "type": "boolean", "default": true },
+    "showConditions": { "type": "boolean", "default": true },
+    "showLastUpdated": { "type": "boolean", "default": true },
+    "showFreshnessChip": { "type": "boolean", "default": true },
+    "showCars": { "type": "boolean", "default": true },
+    "showCarHighlights": { "type": "boolean", "default": false },
+    "showDirection": { "type": "boolean", "default": true },
+    "showStationCode": { "type": "boolean", "default": false },
+    "showStatus": { "type": "boolean", "default": true },
+    "showNextSummary": { "type": "boolean", "default": true },
+    "showMetroBus": { "type": "boolean", "default": false },
+    "metroBusOnlyMode": { "type": "boolean", "default": false },
+    "showMetroBusHeader": { "type": "boolean", "default": true },
+    "metroBusRotateStops": { "type": "boolean", "default": false },
+    "metroBusStopRotationInterval": { "type": "number", "minimum": 2000, "default": 15000 },
+    "metroBusStops": {
+      "type": "array",
+      "maxItems": 20,
+      "items": { "$ref": "#/$defs/metroBusStop" },
+      "default": []
+    },
+    "metroBusMaxRows": { "type": "integer", "minimum": 1, "default": 5 },
+    "metroBusRouteFilter": { "type": "array", "items": { "type": "string" }, "default": [] },
+    "staleAfterSeconds": { "type": "number", "minimum": 1, "default": 180 },
+    "directionMode": { "type": "string", "enum": ["cardinal", "terminal"], "default": "cardinal" },
+    "activeProfile": { "type": "string", "enum": ["auto", "workday", "weekend", "event"], "default": "auto" },
+    "profiles": {
+      "type": "object",
+      "properties": {
+        "workday": { "$ref": "#/$defs/profile" },
+        "weekend": { "$ref": "#/$defs/profile" },
+        "event": { "$ref": "#/$defs/profile" }
+      },
+      "additionalProperties": false,
+      "default": {
+        "workday": { "autoCompact": true, "compact": false, "summaryCount": 3, "maxRows": 8 },
+        "weekend": { "autoCompact": false, "compact": false, "summaryCount": 2, "maxRows": 6 },
+        "event": { "autoCompact": false, "compact": true, "summaryCount": 4, "maxRows": 10 }
+      }
+    },
+    "profileSchedule": {
+      "type": "object",
+      "properties": {
+        "workday": {
+          "type": "object",
+          "properties": {
+            "weekdays": { "$ref": "#/$defs/timeWindowArray" },
+            "weekends": { "$ref": "#/$defs/timeWindowArray" }
+          },
+          "required": ["weekdays", "weekends"],
+          "additionalProperties": false
+        },
+        "weekend": {
+          "type": "object",
+          "properties": {
+            "weekdays": { "$ref": "#/$defs/timeWindowArray" },
+            "weekends": { "$ref": "#/$defs/timeWindowArray" }
+          },
+          "required": ["weekdays", "weekends"],
+          "additionalProperties": false
+        },
+        "eventDates": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" }
+        }
+      },
+      "additionalProperties": false,
+      "default": {
+        "workday": {
+          "weekdays": [{ "start": "00:00", "end": "23:59" }],
+          "weekends": []
+        },
+        "weekend": {
+          "weekdays": [],
+          "weekends": [{ "start": "00:00", "end": "23:59" }]
+        },
+        "eventDates": []
+      }
+    },
+    "rotateStations": { "type": "boolean", "default": true },
+    "groupByLine": { "type": "boolean", "default": true },
+    "commuteMode": { "type": "boolean", "default": true },
+    "commuteSchedule": {
+      "type": "object",
+      "properties": {
+        "weekdays": { "$ref": "#/$defs/timeWindowArray" },
+        "weekends": { "$ref": "#/$defs/timeWindowArray" }
+      },
+      "required": ["weekdays", "weekends"],
+      "additionalProperties": false,
+      "default": {
+        "weekdays": [
+          { "start": "06:00", "end": "09:30" },
+          { "start": "15:30", "end": "19:00" }
+        ],
+        "weekends": []
+      }
+    },
+    "autoCompact": { "type": "boolean", "default": true },
+    "commuteMaxRows": { "type": "integer", "minimum": 1, "default": 5 },
+    "walkBufferMinutes": { "type": "number", "minimum": 0, "default": 5 },
+    "leaveNowWindowMinutes": { "type": "number", "minimum": 1, "default": 6 },
+    "compact": { "type": "boolean", "default": false },
+    "animationSpeed": { "type": "number", "minimum": 0, "default": 1000 }
+  },
+  "additionalProperties": false
+}

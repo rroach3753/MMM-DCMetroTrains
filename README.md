@@ -251,6 +251,11 @@ Add this to your `config/config.js` file:
 
 ## Configuration Options
 
+The [`config.schema.json`](./config.schema.json) file provides validation,
+completion, and default-value hints for the module `config` object. The
+`WMATA_API_KEY` remains a server environment variable and is intentionally not
+part of the schema.
+
 One server environment variable is required:
 
 - `WMATA_API_KEY` must be set to a valid WMATA API key before starting MagicMirror.
